@@ -425,10 +425,11 @@
 
 <script>
 // ══════════════════════════════════════════════════════════════════
-// ▌ CONFIG — Fill in your Supabase project details below
+// ▌ CONFIG
 // ══════════════════════════════════════════════════════════════════
-const SUPABASE_URL = https://dyttrevzhxjmtdiynfpu.supabase.co;
-const SUPABASE_KEY = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR5dHRyZXZ6aHhqbXRkaXluZnB1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0NzQzNTgsImV4cCI6MjA5MTA1MDM1OH0.jfEEylD0LnXmitqy7lWDmL0TlGADaCvIW-yDhmuZHTg;
+const SUPABASE_URL = 'https://dyttrevzhxjmtdiynfpu.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR5dHRyZXZ6aHhqbXRkaXluZnB1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0NzQzNTgsImV4cCI6MjA5MTA1MDM1OH0.jfEEylD0LnXmitqy7lWDmL0TlGADaCvIW-yDhmuZHTg';
+const ADMIN_PASSWORD = 'suns123'; // master admin password
 
 // ══════════════════════════════════════════════════════════════════
 // ▌ DYNAMIC DOUBLE ELIMINATION BRACKET GENERATOR
@@ -768,17 +769,14 @@ function myVote(matchupId){ return activeVotes.find(v=>v.device_token===deviceTo
 // ▌ ADMIN ACTIONS
 // ══════════════════════════════════════════════════════════════════
 async function adminCreateSession(){
-  const pw=document.getElementById('new-pw').value.trim();
   const max=parseInt(document.getElementById('new-max').value)||2;
-  if(!pw){ toast('Set a password','err'); return; }
-  const {data,error}=await sb.from('game_sessions').insert({admin_password:pw,max_noms_per_person:max,phase:'nominating'}).select().single();
+  const {data,error}=await sb.from('game_sessions').insert({admin_password:ADMIN_PASSWORD,max_noms_per_person:max,phase:'nominating'}).select().single();
   if(error){ toast('Error: '+error.message,'err'); return; }
   session=data; nominations=[]; matchups=[];
   toast('Session created!','ok'); renderAdminContent(); updateHeader();
 }
 function adminLogin(){
-  if(!session){ toast('No session exists yet','err'); return; }
-  if(document.getElementById('admin-pw-input').value===session.admin_password){
+  if(document.getElementById('admin-pw-input').value===ADMIN_PASSWORD){
     isAdmin=true;
     document.getElementById('admin-gate').style.display='none';
     document.getElementById('admin-panel').style.display='block';
@@ -1160,7 +1158,6 @@ function renderAdminContent(){
   if(!session){
     el.innerHTML=`<div class="admin-sec">
       <h3>CREATE SESSION</h3>
-      <div class="form-group"><label>Admin Password</label><input type="password" id="new-pw" placeholder="Set a password"></div>
       <div class="form-group"><label>Max nominations per person</label><input type="number" id="new-max" value="2" min="1" max="5" style="width:80px;"></div>
       <button class="btn btn-amber" onclick="adminCreateSession()">CREATE SESSION</button>
     </div>`;
