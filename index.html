@@ -1086,49 +1086,47 @@ function updateHeader(){
 function renderLobby(){
   const el=document.getElementById('lobby-card');
   if(!session){
-    el.innerHTML=`<h2>NO ACTIVE SESSION</h2>
-      <p style="color:var(--text-dim);font-size:14px;margin-bottom:20px;">Ask the host to create a session, or create one yourself via Admin.</p>
+    el.innerHTML=`<h2 style="color:var(--cream);font-family:var(--font-h);font-style:italic;margin-bottom:12px;">No Active Session</h2>
+      <p style="color:var(--text-dim);font-size:14px;margin-bottom:20px;">Ask the host to create one, or open Admin and start a session yourself.</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <button class="btn btn-amber" onclick="toggleAdmin()">CREATE SESSION</button>
-        <button class="btn btn-ghost" onclick="init()">REFRESH</button>
+        <button class="btn btn-amber" onclick="toggleAdmin()">⚙ Open Admin</button>
+        <button class="btn btn-ghost" onclick="init()">↻ Refresh</button>
       </div>`;
     return;
   }
   if(!nickname){
-    // Block late joiners — but allow them to request access
     if(session.phase==='bracket'||session.phase==='complete'){
       const myReq=joinRequests.find(r=>r.device_token===deviceToken);
       if(myReq?.status==='pending'){
-        el.innerHTML=`<h2 style="color:var(--amber);">⏳ REQUEST SENT</h2>
-          <p style="color:var(--text-dim);font-size:14px;margin-top:8px;">Waiting for the admin to let you in...</p>
-          <div class="pulse-row" style="margin-top:20px;"><div class="dot"></div><span>Standby, ${esc(myReq.nickname)}</span></div>`;
+        el.innerHTML=`<h2 style="color:var(--gold);font-family:var(--font-h);font-style:italic;margin-bottom:12px;">⏳ Request Pending</h2>
+          <p style="color:var(--text-dim);font-size:14px;">Waiting for the admin to let you in...</p>
+          <div class="pulse-row" style="margin-top:20px;"><div class="dot"></div><span style="color:var(--text-dim);">Standby, ${esc(myReq.nickname)}</span></div>`;
       } else if(myReq?.status==='denied'){
-        el.innerHTML=`<h2 style="color:var(--red);">❌ REQUEST DENIED</h2>
-          <p style="color:var(--text-dim);font-size:14px;margin-top:8px;">The admin said no. Brutal.</p>`;
+        el.innerHTML=`<h2 style="color:var(--red);font-family:var(--font-h);font-style:italic;margin-bottom:12px;">Request Denied</h2>
+          <p style="color:var(--text-dim);font-size:14px;">The admin said no. Try again next time.</p>`;
       } else {
-        el.innerHTML=`<h2 style="color:var(--amber);">🔒 BRACKET IN PROGRESS</h2>
-          <p style="color:var(--text-dim);font-size:14px;margin-top:8px;margin-bottom:20px;">You're late — nominations are closed. You can request to join as a <strong>voter only</strong>.</p>
+        el.innerHTML=`<h2 style="color:var(--cream);font-family:var(--font-h);font-style:italic;margin-bottom:12px;">🔒 Bracket In Progress</h2>
+          <p style="color:var(--text-dim);font-size:14px;margin-bottom:20px;">Nominations are closed — but you can request to join as a <strong style="color:var(--gold);">voter only</strong>.</p>
           <div class="form-group">
             <label>Your Nickname</label>
             <input type="text" id="nick-input" placeholder="Enter your name" maxlength="20"
               onkeydown="if(event.key==='Enter')requestLateJoin()">
           </div>
-          <button class="btn btn-amber" style="width:100%;" onclick="requestLateJoin()">📨 Request to Join as Voter</button>`;
+          <button class="btn btn-amber" style="width:100%;" onclick="requestLateJoin()">📨 Request to Join</button>`;
         setTimeout(()=>{ const i=document.getElementById('nick-input'); if(i) i.focus(); },50);
       }
       return;
     }
-    el.innerHTML=`<h2>JOIN SESSION</h2>
+    el.innerHTML=`<h2 style="color:var(--cream);font-family:var(--font-h);font-style:italic;margin-bottom:20px;">Enter The Floor</h2>
       <div class="form-group">
         <label>Your Nickname</label>
-        <input type="text" id="nick-input" placeholder="Enter your name" maxlength="20"
+        <input type="text" id="nick-input" placeholder="Who are you?" maxlength="20"
           onkeydown="if(event.key==='Enter')enterNick()">
       </div>
-      <button class="btn btn-cyan" style="width:100%;" onclick="enterNick()">JOIN 🎮</button>`;
+      <button class="btn btn-amber" style="width:100%;" onclick="enterNick()">Enter 🎮</button>`;
     setTimeout(()=>{ const el=document.getElementById('nick-input'); if(el) el.focus(); },50);
     return;
   }
-  // Has session + nickname: redirect
   document.getElementById('nav-tabs').classList.add('show');
   const a=activeMatchup();
   if(session.phase==='bracket'&&a) nav('screen-vote');
