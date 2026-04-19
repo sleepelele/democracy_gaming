@@ -654,6 +654,7 @@ function startNominationsPolling(){
 function stopNominationsPolling(){
   if(nominationsPollInterval){ clearInterval(nominationsPollInterval); nominationsPollInterval=null; }
 }
+function bracketLabel(tplId){
   if(tplId.startsWith('GF')) return 'Grand Final';
   const [b,r]=tplId.split('-'); const bn=b==='W'?'Winners':'Losers'; const rn=r.replace('R','Round ');
   return `${bn} ${rn}`;
