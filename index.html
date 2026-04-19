@@ -733,18 +733,20 @@ async function loadActiveVotes(){
 }
 async function loadJoinRequests(){
   if(!session) return;
-  const {data}=await sb.from('join_requests').select('*').eq('session_id',session.id).order('created_at');
-  joinRequests=data||[];
-  // Check if this device's request was approved
-  const mine=joinRequests.find(r=>r.device_token===deviceToken);
-  if(mine?.status==='approved'&&!lateJoinApproved){
-    lateJoinApproved=true;
-    nickname=mine.nickname; localStorage.setItem('nickname',nickname);
-    document.getElementById('header-nick').textContent=`👤 ${nickname}`;
-    document.getElementById('nav-tabs').classList.add('show');
-    toast('✓ Admin let you in! Voter only.','ok');
-    nav('screen-vote');
-  }
+  try {
+    const {data,error}=await sb.from('join_requests').select('*').eq('session_id',session.id).order('created_at');
+    if(error){ joinRequests=[]; return; }
+    joinRequests=data||[];
+    const mine=joinRequests.find(r=>r.device_token===deviceToken);
+    if(mine?.status==='approved'&&!lateJoinApproved){
+      lateJoinApproved=true;
+      nickname=mine.nickname; localStorage.setItem('nickname',nickname);
+      document.getElementById('header-nick').textContent=`👤 ${nickname}`;
+      document.getElementById('nav-tabs').classList.add('show');
+      toast('✓ Admin let you in! Voter only.','ok');
+      nav('screen-vote');
+    }
+  } catch(e){ joinRequests=[]; }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -777,10 +779,11 @@ function setupRealtime(){
       if(activeScreen==='screen-admin') renderAdminContent();
     })
     .on('postgres_changes',{event:'*',schema:'public',table:'join_requests'},async()=>{
-      await loadJoinRequests();
-      if(activeScreen==='screen-admin') renderAdminContent();
-      // Re-render lobby for the waiting user
-      if(activeScreen==='screen-lobby') renderLobby();
+      try {
+        await loadJoinRequests();
+        if(activeScreen==='screen-admin') renderAdminContent();
+        if(activeScreen==='screen-lobby') renderLobby();
+      } catch(e){}
     })
     .subscribe();
 }
