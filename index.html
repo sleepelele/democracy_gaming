@@ -405,10 +405,9 @@
   </div>
   <div class="card">
     <div id="nom-my-status"></div>
-    <div id="nom-form-area"></div>
-    <hr class="divider">
     <div style="font-family:var(--font-h);font-size:12px;letter-spacing:2px;color:var(--text-dim);margin-bottom:10px;">ALL NOMINATIONS</div>
     <div id="nom-list" class="nom-list"></div>
+    <div id="nom-form-area"></div>
   </div>
 </div>
 
@@ -530,6 +529,7 @@ function buildTemplate(n) {
 let sb, session=null, nominations=[], matchups=[], activeVotes=[], activeScreen='screen-lobby';
 let deviceToken='', nickname='', isAdmin=false, tieMatchupId=null;
 let coinFlip=null; // {matchupId, running, winnerId, loserId}
+let joinRequests=[], lateJoinApproved=false;
 
 // ══════════════════════════════════════════════════════════════════
 // ▌ UTILS
@@ -606,7 +606,7 @@ function startCoinFlip(matchup, g1, g2){
 async function loadSession(){
   const {data}=await sb.from('game_sessions').select('*').order('created_at',{ascending:false}).limit(1);
   session=data&&data.length?data[0]:null;
-  if(session){ await Promise.all([loadNominations(),loadMatchups()]); }
+  if(session){ await Promise.all([loadNominations(),loadMatchups(),loadJoinRequests()]); }
 }
 async function loadNominations(){
   const {data}=await sb.from('nominations').select('*').eq('session_id',session.id).order('created_at');
@@ -621,6 +621,21 @@ async function loadActiveVotes(){
   if(!a){ activeVotes=[]; return; }
   const {data}=await sb.from('votes').select('*').eq('matchup_id',a.id);
   activeVotes=data||[];
+}
+async function loadJoinRequests(){
+  if(!session) return;
+  const {data}=await sb.from('join_requests').select('*').eq('session_id',session.id).order('created_at');
+  joinRequests=data||[];
+  // Check if this device's request was approved
+  const mine=joinRequests.find(r=>r.device_token===deviceToken);
+  if(mine?.status==='approved'&&!lateJoinApproved){
+    lateJoinApproved=true;
+    nickname=mine.nickname; localStorage.setItem('nickname',nickname);
+    document.getElementById('header-nick').textContent=`👤 ${nickname}`;
+    document.getElementById('nav-tabs').classList.add('show');
+    toast('✓ Admin let you in! Voter only.','ok');
+    nav('screen-vote');
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -651,6 +666,12 @@ function setupRealtime(){
       await loadActiveVotes();
       if(activeScreen==='screen-vote') renderVoteScreen();
       if(activeScreen==='screen-admin') renderAdminContent();
+    })
+    .on('postgres_changes',{event:'*',schema:'public',table:'join_requests'},async()=>{
+      await loadJoinRequests();
+      if(activeScreen==='screen-admin') renderAdminContent();
+      // Re-render lobby for the waiting user
+      if(activeScreen==='screen-lobby') renderLobby();
     })
     .subscribe();
 }
@@ -938,6 +959,10 @@ function updateHeader(){
   ph.className='ph-'+session.phase;
   const a=activeMatchup();
   document.getElementById('tab-vote').classList.toggle('has-ping',!!a);
+  // Badge on admin button if there are pending join requests
+  const pending=joinRequests.filter(r=>r.status==='pending').length;
+  const adminBtn=document.querySelector('.btn-admin-toggle');
+  if(adminBtn) adminBtn.textContent=pending?`ADMIN 🔴`:' ADMIN';
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -955,6 +980,29 @@ function renderLobby(){
     return;
   }
   if(!nickname){
+    // Block late joiners — but allow them to request access
+    if(session.phase==='bracket'||session.phase==='complete'){
+      const myReq=joinRequests.find(r=>r.device_token===deviceToken);
+      if(myReq?.status==='pending'){
+        el.innerHTML=`<h2 style="color:var(--amber);">⏳ REQUEST SENT</h2>
+          <p style="color:var(--text-dim);font-size:14px;margin-top:8px;">Waiting for the admin to let you in...</p>
+          <div class="pulse-row" style="margin-top:20px;"><div class="dot"></div><span>Standby, ${esc(myReq.nickname)}</span></div>`;
+      } else if(myReq?.status==='denied'){
+        el.innerHTML=`<h2 style="color:var(--red);">❌ REQUEST DENIED</h2>
+          <p style="color:var(--text-dim);font-size:14px;margin-top:8px;">The admin said no. Brutal.</p>`;
+      } else {
+        el.innerHTML=`<h2 style="color:var(--amber);">🔒 BRACKET IN PROGRESS</h2>
+          <p style="color:var(--text-dim);font-size:14px;margin-top:8px;margin-bottom:20px;">You're late — nominations are closed. You can request to join as a <strong>voter only</strong>.</p>
+          <div class="form-group">
+            <label>Your Nickname</label>
+            <input type="text" id="nick-input" placeholder="Enter your name" maxlength="20"
+              onkeydown="if(event.key==='Enter')requestLateJoin()">
+          </div>
+          <button class="btn btn-amber" style="width:100%;" onclick="requestLateJoin()">📨 Request to Join as Voter</button>`;
+        setTimeout(()=>{ const i=document.getElementById('nick-input'); if(i) i.focus(); },50);
+      }
+      return;
+    }
     el.innerHTML=`<h2>JOIN SESSION</h2>
       <div class="form-group">
         <label>Your Nickname</label>
@@ -980,6 +1028,33 @@ function enterNick(){
   document.getElementById('nav-tabs').classList.add('show');
   renderLobby();
 }
+async function requestLateJoin(){
+  const el=document.getElementById('nick-input'); if(!el) return;
+  const n=el.value.trim(); if(!n){ toast('Enter a nickname first','err'); return; }
+  const {error}=await sb.from('join_requests').insert({
+    session_id:session.id, nickname:n, device_token:deviceToken, status:'pending'
+  });
+  if(error){
+    if(error.code==='23505') toast('Request already sent!','err');
+    else toast('Error: '+error.message,'err');
+    return;
+  }
+  await loadJoinRequests();
+  toast('Request sent! Waiting for admin...','ok');
+  renderLobby();
+}
+async function approveLateJoin(requestId){
+  await sb.from('join_requests').update({status:'approved'}).eq('id',requestId);
+  await loadJoinRequests();
+  renderAdminContent();
+  toast('User approved ✓','ok');
+}
+async function denyLateJoin(requestId){
+  await sb.from('join_requests').update({status:'denied'}).eq('id',requestId);
+  await loadJoinRequests();
+  renderAdminContent();
+  toast('Request denied','');
+}
 
 // ══════════════════════════════════════════════════════════════════
 // ▌ RENDERING — NOMINATIONS
@@ -999,26 +1074,29 @@ function renderNomScreen(){
     st.innerHTML=`<div class="nom-status-msg" style="color:var(--text-dim);">Submit up to <strong>${max}</strong> game${max>1?'s':''} &mdash; ${mine.length}/${max} done</div>`;
   }
 
+  // Show full list FIRST so people see what's already in before typing
+  const list=document.getElementById('nom-list');
+  if(!nominations.length){
+    list.innerHTML=`<div style="text-align:center;color:var(--text-muted);padding:16px 0;">No games nominated yet — be the first!</div>`;
+  } else {
+    list.innerHTML=nominations.map(n=>{
+      const isMe=n.submitted_by===nickname;
+      return `<div class="nom-item${isMe?' mine':''}">
+        <span class="nom-game">${esc(n.game_name)}</span>
+        <span class="nom-by">${esc(n.submitted_by)}${isMe?' (you)':''}</span>
+      </div>`;
+    }).join('');
+  }
+
+  // Form below the list
   document.getElementById('nom-form-area').innerHTML=canNom?`
+    <hr class="divider">
     <div class="nom-form">
-      <input type="text" id="nom-input" placeholder="Game name..." maxlength="60"
+      <input type="text" id="nom-input" placeholder="Nominate a game..." maxlength="60"
         onkeydown="if(event.key==='Enter')submitNom()">
       <button class="btn btn-cyan" onclick="submitNom()">NOMINATE</button>
     </div>
-  `:'';
-
-  const list=document.getElementById('nom-list');
-  if(!nominations.length){
-    list.innerHTML=`<div style="text-align:center;color:var(--text-muted);padding:20px;">No nominations yet</div>`;
-    return;
-  }
-  list.innerHTML=nominations.map(n=>{
-    const mine2=n.submitted_by===nickname;
-    return `<div class="nom-item${mine2?' mine':''}">
-      <span class="nom-game">${esc(n.game_name)}</span>
-      <span class="nom-by">${esc(n.submitted_by)}${mine2?' (you)':''}</span>
-    </div>`;
-  }).join('');
+  `:session?.phase==='nominating'?`<hr class="divider">`:'';
 }
 async function submitNom(){
   const el=document.getElementById('nom-input'); if(!el) return;
@@ -1272,9 +1350,41 @@ function renderAdminContent(){
     </div>
     ${session.phase==='nominating'?`
     <div class="admin-sec">
+      <h3>WHO'S SUBMITTED</h3>
+      ${(()=>{
+        const max=session.max_noms_per_person;
+        const byPerson={};
+        nominations.forEach(n=>{ if(!byPerson[n.submitted_by]) byPerson[n.submitted_by]=[]; byPerson[n.submitted_by].push(n.game_name); });
+        if(!Object.keys(byPerson).length) return `<p style="color:var(--text-muted);font-size:13px;">Nobody has nominated yet.</p>`;
+        return Object.entries(byPerson).map(([name,games])=>`
+          <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
+            <div style="font-weight:700;min-width:110px;font-size:13px;padding-top:2px;">${esc(name)}</div>
+            <div style="display:flex;flex-direction:column;gap:3px;flex:1;">
+              ${games.map(g=>`<span style="font-size:12px;color:var(--cyan);">🎮 ${esc(g)}</span>`).join('')}
+              ${games.length<max?`<span style="font-size:11px;color:var(--amber);">${max-games.length} more slot${max-games.length>1?'s':''} remaining</span>`:'<span style="font-size:11px;color:var(--green);">✓ Done</span>'}
+            </div>
+          </div>`).join('');
+      })()}
+    </div>
+    <div class="admin-sec">
       <h3>GENERATE BRACKET</h3>
       <p style="font-size:13px;color:var(--text-dim);margin-bottom:12px;">${nominations.length} game${nominations.length!==1?'s':''} nominated. Lock and shuffle into a bracket when everyone is ready.</p>
       <button class="btn btn-cyan" onclick="adminLockAndGenerate()" ${nominations.length<2?'disabled':''}>🎲 Lock & Generate Bracket</button>
+    </div>`:''}
+    ${session.phase!=='nominating'&&joinRequests.length?`
+    <div class="admin-sec">
+      <h3>JOIN REQUESTS</h3>
+      ${joinRequests.map(r=>`
+        <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
+          <div style="flex:1;">
+            <div style="font-weight:700;font-size:13px;">${esc(r.nickname)}</div>
+            <div style="font-size:11px;color:var(--text-muted);">wants to join as voter</div>
+          </div>
+          ${r.status==='pending'?`
+            <button class="btn btn-green btn-sm" onclick="approveLateJoin('${r.id}')">✓ Let In</button>
+            <button class="btn btn-ghost btn-sm" onclick="denyLateJoin('${r.id}')">✕ Deny</button>
+          `:`<span style="font-size:11px;font-weight:700;color:${r.status==='approved'?'var(--green)':'var(--text-muted)'}">${r.status==='approved'?'✓ Approved':'✕ Denied'}</span>`}
+        </div>`).join('')}
     </div>`:''}
     ${session.phase==='complete'?`
     <div class="admin-sec">
