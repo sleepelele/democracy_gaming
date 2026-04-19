@@ -953,7 +953,9 @@ async function adminCreateSession(){
   const {data,error}=await sb.from('game_sessions').insert({admin_password:ADMIN_PASSWORD,max_noms_per_person:max,phase:'nominating'}).select().single();
   if(error){ toast('Error: '+error.message,'err'); return; }
   session=data; nominations=[]; matchups=[];
-  toast('Session created!','ok'); renderAdminContent(); updateHeader();
+  toast('Session created! Enter your nickname to continue.','ok');
+  renderAdminContent(); updateHeader();
+  if(!nickname){ nav('screen-lobby'); renderLobby(); }
 }
 function adminLogin(){
   if(document.getElementById('admin-pw-input').value===ADMIN_PASSWORD){
@@ -1197,6 +1199,7 @@ function renderNomScreen(){
 async function submitNom(){
   const el=document.getElementById('nom-input'); if(!el) return;
   const name=el.value.trim(); if(!name) return;
+  if(!nickname){ toast('Enter your nickname first!','err'); nav('screen-lobby'); renderLobby(); return; }
   if(nominations.some(n=>n.game_name.toLowerCase()===name.toLowerCase())){
     toast('Already nominated!','err'); return;
   }
