@@ -1,0 +1,1232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🎮 Game Night Bracket</title>
+
+  <!--
+  ══════════════════════════════════════════════════════════════════
+  SUPABASE SETUP — Run this SQL in your Supabase SQL Editor first:
+  ══════════════════════════════════════════════════════════════════
+
+  CREATE TABLE game_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    phase TEXT NOT NULL DEFAULT 'nominating',
+    admin_password TEXT NOT NULL,
+    max_noms_per_person INTEGER DEFAULT 2,
+    winner_game_id UUID,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
+  CREATE TABLE nominations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID REFERENCES game_sessions(id) ON DELETE CASCADE,
+    game_name TEXT NOT NULL,
+    submitted_by TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
+  CREATE TABLE matchups (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID REFERENCES game_sessions(id) ON DELETE CASCADE,
+    template_id TEXT NOT NULL,
+    bracket TEXT NOT NULL,
+    round INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    game1_id UUID REFERENCES nominations(id),
+    game2_id UUID REFERENCES nominations(id),
+    winner_id UUID REFERENCES nominations(id),
+    loser_id UUID REFERENCES nominations(id),
+    status TEXT DEFAULT 'pending',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
+  CREATE TABLE votes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    matchup_id UUID REFERENCES matchups(id) ON DELETE CASCADE,
+    game_id UUID REFERENCES nominations(id),
+    device_token TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(matchup_id, device_token)
+  );
+
+  ALTER TABLE game_sessions DISABLE ROW LEVEL SECURITY;
+  ALTER TABLE nominations    DISABLE ROW LEVEL SECURITY;
+  ALTER TABLE matchups       DISABLE ROW LEVEL SECURITY;
+  ALTER TABLE votes          DISABLE ROW LEVEL SECURITY;
+
+  Then go to: Supabase Dashboard → Database → Replication
+  Enable replication for: game_sessions, nominations, matchups, votes
+  ══════════════════════════════════════════════════════════════════
+  -->
+
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <style>
+    /* ── Variables ───────────────────────────────────────────────── */
+    :root {
+      --bg:        #09090f;
+      --bg2:       #0f1018;
+      --surface:   #14161f;
+      --surface2:  #1b1d2a;
+      --border:    #252838;
+      --cyan:      #00d4ff;
+      --cyan-dim:  rgba(0,212,255,0.12);
+      --amber:     #ffaa00;
+      --amber-dim: rgba(255,170,0,0.12);
+      --green:     #00ff88;
+      --green-dim: rgba(0,255,136,0.12);
+      --red:       #ff4060;
+      --red-dim:   rgba(255,64,96,0.12);
+      --text:      #e2e8f4;
+      --text-dim:  #7a849a;
+      --text-muted:#3d4458;
+      --font-h: 'Bebas Neue', sans-serif;
+      --font-b: 'DM Sans', sans-serif;
+      --r: 6px;
+    }
+
+    /* ── Reset ───────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-b);
+      min-height: 100vh;
+      font-size: 15px;
+      line-height: 1.5;
+    }
+    button { cursor: pointer; font-family: var(--font-b); font-weight: 700; border: none; border-radius: var(--r); transition: all 0.15s; }
+    input  { font-family: var(--font-b); font-size: 15px; }
+    a      { color: var(--cyan); text-decoration: none; }
+
+    /* ── Header ──────────────────────────────────────────────────── */
+    #header {
+      position: fixed; top: 0; left: 0; right: 0; height: 54px;
+      background: rgba(9,9,15,0.92); backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 20px; z-index: 200;
+    }
+    .logo { font-family: var(--font-h); font-size: 20px; letter-spacing: 3px; color: var(--cyan); }
+    #header-right { display: flex; align-items: center; gap: 12px; }
+    #header-nick { font-size: 13px; color: var(--text-dim); }
+    #header-phase {
+      font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px;
+      padding: 3px 10px; border-radius: 20px; border: 1px solid var(--border); color: var(--text-muted);
+    }
+    #header-phase.ph-nominating { border-color: var(--amber); color: var(--amber); }
+    #header-phase.ph-bracket    { border-color: var(--cyan);  color: var(--cyan);  }
+    #header-phase.ph-complete   { border-color: var(--green); color: var(--green); }
+    .btn-admin-toggle {
+      background: none; border: 1px solid var(--amber); color: var(--amber);
+      padding: 4px 10px; font-size: 10px; letter-spacing: 1px; border-radius: 4px;
+    }
+    .btn-admin-toggle:hover { background: var(--amber-dim); }
+
+    /* ── Nav tabs ────────────────────────────────────────────────── */
+    #nav-tabs {
+      position: fixed; top: 54px; left: 0; right: 0;
+      display: none; background: var(--bg2);
+      border-bottom: 1px solid var(--border); z-index: 199;
+    }
+    #nav-tabs.show { display: flex; }
+    .nav-tab {
+      flex: 1; padding: 10px 8px; background: none;
+      font-family: var(--font-h); font-size: 13px; letter-spacing: 1.5px;
+      color: var(--text-muted); border-radius: 0;
+      border-bottom: 2px solid transparent; transition: all 0.15s;
+      position: relative;
+    }
+    .nav-tab.active { color: var(--cyan); border-bottom-color: var(--cyan); }
+    .nav-tab:hover:not(.active) { color: var(--text-dim); }
+    .nav-tab .vote-ping {
+      position: absolute; top: 6px; right: calc(50% - 24px);
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--amber); display: none;
+      animation: ping 1s ease-in-out infinite;
+    }
+    .nav-tab.has-ping .vote-ping { display: block; }
+    @keyframes ping { 0%,100%{opacity:.3;transform:scale(.8)} 50%{opacity:1;transform:scale(1)} }
+
+    /* ── Screens ─────────────────────────────────────────────────── */
+    .screen { display: none; padding: 24px 20px; padding-top: 110px; max-width: 820px; margin: 0 auto; }
+    .screen.active { display: block; }
+    .screen-wide { max-width: none; padding-left: 0; padding-right: 0; }
+
+    /* ── Shared components ───────────────────────────────────────── */
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 20px; }
+    .divider { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+    label { display: block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); margin-bottom: 6px; }
+    input[type="text"], input[type="password"], input[type="number"] {
+      width: 100%; padding: 10px 14px;
+      background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r);
+      color: var(--text); outline: none; transition: border-color 0.15s;
+    }
+    input:focus { border-color: var(--cyan); }
+
+    /* Buttons */
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 10px 18px; font-size: 13px; border-radius: var(--r); }
+    .btn-sm { padding: 6px 12px; font-size: 11px; }
+    .btn-cyan  { background: var(--cyan); color: #000; }
+    .btn-cyan:hover  { filter: brightness(1.1); box-shadow: 0 0 16px rgba(0,212,255,.35); }
+    .btn-amber { background: var(--amber); color: #000; }
+    .btn-amber:hover { filter: brightness(1.1); box-shadow: 0 0 16px rgba(255,170,0,.35); }
+    .btn-green { background: var(--green); color: #000; }
+    .btn-green:hover { filter: brightness(1.1); box-shadow: 0 0 16px rgba(0,255,136,.35); }
+    .btn-red   { background: var(--red); color: #fff; }
+    .btn-red:hover   { filter: brightness(1.1); }
+    .btn-ghost { background: var(--surface2); color: var(--text-dim); border: 1px solid var(--border); }
+    .btn-ghost:hover { border-color: var(--cyan); color: var(--cyan); }
+    .btn:disabled { opacity: .35; cursor: not-allowed; filter: none !important; box-shadow: none !important; }
+
+    /* ── Lobby ───────────────────────────────────────────────────── */
+    #screen-lobby {
+      display: none; flex-direction: column; align-items: center; justify-content: center;
+      min-height: 100vh; padding-top: 54px; text-align: center;
+    }
+    #screen-lobby.active { display: flex; }
+    .lobby-title {
+      font-family: var(--font-h); font-size: clamp(52px,12vw,100px);
+      letter-spacing: 6px; color: var(--cyan);
+      text-shadow: 0 0 60px rgba(0,212,255,.3); line-height: 1; margin-bottom: 6px;
+    }
+    .lobby-sub { font-size: 13px; color: var(--text-dim); letter-spacing: 2px; text-transform: uppercase; margin-bottom: 40px; }
+    .lobby-card { width: 100%; max-width: 380px; }
+    .lobby-card h2 { font-family: var(--font-h); font-size: 22px; letter-spacing: 2px; margin-bottom: 20px; }
+
+    /* ── Nominations ─────────────────────────────────────────────── */
+    .nom-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+    .nom-header h1 { font-family: var(--font-h); font-size: 30px; letter-spacing: 2px; }
+    .count-badge { font-size: 12px; color: var(--text-dim); padding: 5px 14px; border: 1px solid var(--border); border-radius: 20px; }
+    .nom-form { display: flex; gap: 8px; margin-top: 16px; }
+    .nom-form input { flex: 1; }
+    .nom-list { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+    .nom-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r);
+    }
+    .nom-item.mine { border-color: rgba(0,212,255,.3); }
+    .nom-game { font-weight: 700; flex: 1; }
+    .nom-by { font-size: 12px; color: var(--text-muted); }
+    .nom-status-msg { margin-bottom: 16px; font-size: 14px; }
+
+    /* ── Bracket ─────────────────────────────────────────────────── */
+    #screen-bracket { max-width: none; overflow-x: auto; padding-left: 0; padding-right: 0; }
+    .bracket-wrap { padding: 0 20px 40px; min-width: max-content; }
+    .bracket-section { margin-bottom: 32px; }
+    .b-section-label {
+      font-family: var(--font-h); font-size: 13px; letter-spacing: 3px;
+      padding: 6px 14px; margin-bottom: 12px; display: inline-flex; align-items: center; gap: 8px;
+    }
+    .b-section-label.winners { color: var(--cyan); border-left: 3px solid var(--cyan); }
+    .b-section-label.losers  { color: var(--red);  border-left: 3px solid var(--red);  }
+    .b-section-label.gf      { color: var(--green); border-left: 3px solid var(--green); }
+    .bracket-rounds { display: flex; align-items: flex-start; gap: 0; }
+    .bracket-col { display: flex; flex-direction: column; min-width: 210px; }
+    .round-label { font-family: var(--font-h); font-size: 11px; letter-spacing: 2px; color: var(--text-muted); text-align: center; padding: 4px; margin-bottom: 4px; }
+    .round-matches { display: flex; flex-direction: column; gap: 8px; }
+
+    /* Matchup card in bracket */
+    .b-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+      overflow: hidden; margin: 2px 8px; transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .b-card.st-voting    { border-color: var(--amber); box-shadow: 0 0 14px rgba(255,170,0,.2); }
+    .b-card.st-revealing { border-color: var(--green); box-shadow: 0 0 14px rgba(0,255,136,.2); }
+    .b-card.st-bye       { opacity: .4; }
+    .b-card-top {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 4px 8px; border-bottom: 1px solid var(--border);
+      font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted);
+    }
+    .st-pill { padding: 1px 6px; border-radius: 8px; font-size: 8px; }
+    .st-pill-pending    { background: var(--surface2); color: var(--text-muted); }
+    .st-pill-voting     { background: var(--amber-dim); color: var(--amber); }
+    .st-pill-revealing  { background: var(--green-dim); color: var(--green); }
+    .st-pill-complete   { background: var(--surface2); color: var(--text-muted); }
+    .st-pill-bye        { background: var(--surface2); color: var(--text-muted); }
+    .b-game {
+      padding: 7px 10px; font-size: 12px; font-weight: 700;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .b-game + .b-game { border-top: 1px solid var(--border); }
+    .b-game.tbd   { color: var(--text-muted); font-style: italic; font-weight: 400; }
+    .b-game.won   { color: var(--green); }
+    .b-game.lost  { color: var(--text-muted); text-decoration: line-through; opacity: .6; }
+    .b-vs {
+      padding: 2px 10px; text-align: center;
+      font-family: var(--font-h); font-size: 9px; letter-spacing: 1px;
+      color: var(--text-muted); background: var(--surface2);
+      border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+    }
+    .b-actions { display: flex; gap: 4px; flex-wrap: wrap; padding: 6px 8px; background: var(--surface2); border-top: 1px solid var(--border); }
+    .b-spacer { height: 12px; }
+
+    /* ── Vote screen ─────────────────────────────────────────────── */
+    #screen-vote {
+      display: none; flex-direction: column; align-items: center; justify-content: center;
+      min-height: calc(100vh - 80px); text-align: center;
+    }
+    #screen-vote.active { display: flex; }
+    .vote-label { font-family: var(--font-h); font-size: 12px; letter-spacing: 4px; color: var(--text-muted); margin-bottom: 4px; }
+    .vote-round-name { font-family: var(--font-h); font-size: 26px; letter-spacing: 2px; margin-bottom: 32px; }
+    .vote-arena { display: flex; align-items: stretch; gap: 0; width: 100%; max-width: 580px; }
+    .vote-card {
+      flex: 1; background: var(--surface); border: 2px solid var(--border); border-radius: var(--r);
+      padding: 32px 20px; cursor: pointer; transition: all 0.2s; position: relative; overflow: hidden;
+    }
+    .vote-card:not(.voted):not(.revealing):hover { border-color: var(--cyan); background: var(--cyan-dim); transform: scale(1.02); }
+    .vote-card.my-pick { border-color: var(--cyan); background: var(--cyan-dim); }
+    .vote-card.win-reveal { border-color: var(--green); background: var(--green-dim); }
+    .vote-card.lose-reveal { border-color: var(--border); background: var(--surface2); opacity: .6; }
+    .vote-card.tie-reveal  { border-color: var(--amber); background: var(--amber-dim); }
+    .v-my-badge {
+      position: absolute; top: 8px; right: 8px;
+      background: var(--cyan); color: #000; font-size: 9px; font-weight: 700;
+      padding: 2px 7px; border-radius: 10px; letter-spacing: .5px;
+    }
+    .v-game-name { font-family: var(--font-h); font-size: 26px; letter-spacing: 1px; margin-bottom: 8px; }
+    .v-vote-count { font-size: 36px; font-weight: 700; margin: 6px 0 2px; }
+    .v-vote-label { font-size: 11px; color: var(--text-muted); }
+    .vote-vs { display: flex; align-items: center; padding: 0 14px; font-family: var(--font-h); font-size: 22px; color: var(--text-muted); flex-shrink: 0; }
+    .vote-status { margin-top: 24px; font-size: 13px; color: var(--text-dim); }
+    .vote-bar { display: flex; height: 5px; border-radius: 3px; overflow: hidden; width: 100%; max-width: 580px; margin-top: 12px; }
+    .vote-bar .bg1 { background: var(--cyan); transition: width .5s ease; }
+    .vote-bar .bg2 { background: var(--amber); transition: width .5s ease; }
+    .vote-admin-row { margin-top: 24px; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+    .pulse-row { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--text-muted); font-size: 13px; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--amber); animation: ping .9s ease-in-out infinite; }
+    .tie-pick { margin-top: 12px; display: none; }
+    .tie-pick-label { font-size: 12px; color: var(--amber); margin-bottom: 6px; }
+    .tie-pick-btns { display: flex; gap: 8px; justify-content: center; }
+
+    /* ── Admin screen ────────────────────────────────────────────── */
+    #screen-admin { max-width: 560px; }
+    #screen-admin h1 { font-family: var(--font-h); font-size: 28px; letter-spacing: 2px; color: var(--amber); margin-bottom: 20px; }
+    .admin-sec { margin-bottom: 24px; }
+    .admin-sec h3 { font-family: var(--font-h); font-size: 14px; letter-spacing: 2px; color: var(--text-dim); margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+    .info-grid { display: grid; gap: 8px; }
+    .info-row { display: flex; gap: 8px; font-size: 13px; }
+    .info-k { color: var(--text-muted); width: 160px; flex-shrink: 0; }
+    .info-v { color: var(--text); font-weight: 600; }
+    .info-v.hi { color: var(--cyan); }
+
+    /* ── Champion banner ─────────────────────────────────────────── */
+    .champ-banner { text-align: center; padding: 48px 20px; }
+    .champ-emoji { font-size: 56px; margin-bottom: 12px; }
+    .champ-label { font-family: var(--font-h); font-size: 14px; letter-spacing: 4px; color: var(--text-muted); margin-bottom: 6px; }
+    .champ-name { font-family: var(--font-h); font-size: clamp(36px,9vw,72px); letter-spacing: 2px; color: var(--green); text-shadow: 0 0 40px rgba(0,255,136,.4); }
+
+    /* ── Toast ───────────────────────────────────────────────────── */
+    #toast {
+      position: fixed; bottom: 24px; left: 50%;
+      transform: translateX(-50%) translateY(16px);
+      background: var(--surface); border: 1px solid var(--border);
+      color: var(--text); padding: 10px 18px; border-radius: var(--r);
+      font-size: 13px; font-weight: 600; opacity: 0; transition: all .25s;
+      z-index: 999; white-space: nowrap; pointer-events: none;
+    }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    #toast.ok  { border-color: var(--green); color: var(--green); }
+    #toast.err { border-color: var(--red);   color: var(--red);   }
+
+    /* ── Misc ────────────────────────────────────────────────────── */
+    .form-group { margin-bottom: 14px; }
+    .mt12 { margin-top: 12px; }
+    .mt16 { margin-top: 16px; }
+    @media(max-width:520px){
+      .vote-arena { flex-direction: column; }
+      .vote-vs { padding: 8px 0; font-size: 18px; }
+      .vote-card { padding: 20px 16px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────────── -->
+<header id="header">
+  <div class="logo">🎮 GAME NIGHT</div>
+  <div id="header-right">
+    <span id="header-nick"></span>
+    <span id="header-phase"></span>
+    <button class="btn-admin-toggle" onclick="toggleAdmin()">ADMIN</button>
+  </div>
+</header>
+
+<!-- ── Nav Tabs ────────────────────────────────────────────────── -->
+<div id="nav-tabs">
+  <button class="nav-tab" onclick="nav('screen-nominate')">NOMINATIONS</button>
+  <button class="nav-tab" onclick="nav('screen-bracket')">BRACKET</button>
+  <button class="nav-tab" id="tab-vote" onclick="nav('screen-vote')">
+    VOTE
+    <span class="vote-ping"></span>
+  </button>
+</div>
+
+<!-- ── Lobby ───────────────────────────────────────────────────── -->
+<div id="screen-lobby" class="screen active">
+  <div class="lobby-title">GAME NIGHT</div>
+  <div class="lobby-sub">Bracket Tournament</div>
+  <div class="card lobby-card" id="lobby-card"></div>
+</div>
+
+<!-- ── Nominations ─────────────────────────────────────────────── -->
+<div id="screen-nominate" class="screen">
+  <div class="nom-header">
+    <div>
+      <h1>NOMINATIONS</h1>
+      <div style="font-size:13px;color:var(--text-dim)">Submit the games you want to play tonight</div>
+    </div>
+    <div class="count-badge" id="nom-count-badge">0 nominated</div>
+  </div>
+  <div class="card">
+    <div id="nom-my-status"></div>
+    <div id="nom-form-area"></div>
+    <hr class="divider">
+    <div style="font-family:var(--font-h);font-size:12px;letter-spacing:2px;color:var(--text-dim);margin-bottom:10px;">ALL NOMINATIONS</div>
+    <div id="nom-list" class="nom-list"></div>
+  </div>
+</div>
+
+<!-- ── Bracket ─────────────────────────────────────────────────── -->
+<div id="screen-bracket" class="screen screen-wide">
+  <div id="bracket-container" class="bracket-wrap"></div>
+</div>
+
+<!-- ── Vote ────────────────────────────────────────────────────── -->
+<div id="screen-vote" class="screen">
+  <div id="vote-container" style="width:100%;max-width:700px;"></div>
+</div>
+
+<!-- ── Admin ───────────────────────────────────────────────────── -->
+<div id="screen-admin" class="screen">
+  <h1>⚙ ADMIN</h1>
+  <div id="admin-gate">
+    <div class="card" style="max-width:360px;">
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="admin-pw-input" placeholder="Enter admin password"
+          onkeydown="if(event.key==='Enter')adminLogin()">
+      </div>
+      <button class="btn btn-amber" onclick="adminLogin()">LOGIN AS ADMIN</button>
+    </div>
+  </div>
+  <div id="admin-panel" style="display:none;">
+    <div id="admin-content"></div>
+  </div>
+</div>
+
+<!-- ── Toast ───────────────────────────────────────────────────── -->
+<div id="toast"></div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════
+// ▌ CONFIG — Fill in your Supabase project details below
+// ══════════════════════════════════════════════════════════════════
+const SUPABASE_URL = 'YOUR_SUPABASE_URL';
+const SUPABASE_KEY = 'YOUR_SUPABASE_ANON_KEY';
+
+// ══════════════════════════════════════════════════════════════════
+// ▌ DYNAMIC DOUBLE ELIMINATION BRACKET GENERATOR
+//   Works for any number of games — rounds up to next power of 2,
+//   extra slots become BYEs that auto-advance during generation.
+//   b: 'W'=Winners 'L'=Losers 'GF'=Grand Final
+//   winTo/loseTo: template_id of destination (null = champion/out)
+//   winS/loseS:   destination slot (1=game1, 2=game2)
+// ══════════════════════════════════════════════════════════════════
+function buildTemplate(n) {
+  // Round up to next power of 2, minimum bracket size of 4
+  let size = 4;
+  while (size < n) size *= 2;
+  const k = Math.log2(size);       // number of winners rounds
+  const lbRounds = 2 * (k - 1);   // total losers bracket rounds
+  const tpl = [];
+
+  // ── Winners bracket ─────────────────────────────────────────────
+  for (let r = 1; r <= k; r++) {
+    const count = size >> r; // size / 2^r matches in this round
+    for (let p = 1; p <= count; p++) {
+      const id = `W-R${r}-P${p}`;
+      let winTo, winS, loseTo, loseS;
+
+      // Winner routing: next W round (or GF if this is WF)
+      if (r === k) { winTo = 'GF-P1'; winS = 1; }
+      else { winTo = `W-R${r+1}-P${Math.ceil(p/2)}`; winS = (p%2===1)?1:2; }
+
+      // Loser routing: drops into losers bracket
+      if (r === 1) {
+        // W-R1 losers pair up into L-R1: (P1,P2)→L-R1-P1, (P3,P4)→L-R1-P2, etc.
+        loseTo = `L-R1-P${Math.ceil(p/2)}`; loseS = (p%2===1)?1:2;
+      } else if (r === k) {
+        // Winners Final loser → very last LB round, slot 2
+        loseTo = `L-R${lbRounds}-P1`; loseS = 2;
+      } else {
+        // W-Rr (2≤r<k) loser → even LB round L-R(2*(r-1)), same position, slot 2
+        loseTo = `L-R${2*(r-1)}-P${p}`; loseS = 2;
+      }
+
+      tpl.push({id, b:'W', r, p, winTo, winS, loseTo, loseS});
+    }
+  }
+
+  // ── Losers bracket ───────────────────────────────────────────────
+  // Rounds alternate: odd = pure LB (winners advance 1-to-1 to next even round)
+  //                   even = merge round (LB winners pair up + W losers drop in)
+  for (let lr = 1; lr <= lbRounds; lr++) {
+    const count = Math.pow(2, k - 1 - Math.ceil(lr/2));
+    for (let p = 1; p <= count; p++) {
+      const id = `L-R${lr}-P${p}`;
+      let winTo, winS;
+
+      if (lr === lbRounds) {
+        // Last LB round winner → GF slot 2
+        winTo = 'GF-P1'; winS = 2;
+      } else if (lr % 2 === 1) {
+        // Odd LB round: 1-to-1 into next (even) round, slot 1
+        // (slot 2 will be filled by a W loser dropping in)
+        winTo = `L-R${lr+1}-P${p}`; winS = 1;
+      } else {
+        // Even LB round: pair up into next (odd) round
+        winTo = `L-R${lr+1}-P${Math.ceil(p/2)}`; winS = (p%2===1)?1:2;
+      }
+
+      tpl.push({id, b:'L', r:lr, p, winTo, winS, loseTo:null, loseS:null});
+    }
+  }
+
+  // ── Grand Final ───────────────────────────────────────────────────
+  tpl.push({id:'GF-P1', b:'GF', r:1, p:1, winTo:null, winS:null, loseTo:null, loseS:null});
+  return tpl;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ▌ STATE
+// ══════════════════════════════════════════════════════════════════
+let sb, session=null, nominations=[], matchups=[], activeVotes=[], activeScreen='screen-lobby';
+let deviceToken='', nickname='', isAdmin=false, tieMatchupId=null;
+
+// ══════════════════════════════════════════════════════════════════
+// ▌ UTILS
+// ══════════════════════════════════════════════════════════════════
+function uuid() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{
+    const r=Math.random()*16|0; return (c==='x'?r:(r&0x3|0x8)).toString(16);
+  });
+}
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+let toastTimer;
+function toast(msg,type=''){
+  const t=document.getElementById('toast'); t.textContent=msg; t.className='show '+type;
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.className='',3000);
+}
+function getTemplate(){
+  return nominations.length>=2 ? buildTemplate(nominations.length) : null;
+}
+function getTpl(tplId){ const t=getTemplate(); return t?t.find(x=>x.id===tplId):null; }
+function matchupByTplId(tplId){ return matchups.find(m=>m.template_id===tplId); }
+function gameName(id){ const n=nominations.find(n=>n.id===id); return n?n.game_name:'TBD'; }
+function activeMatchup(){ return matchups.find(m=>m.status==='voting'||m.status==='revealing'); }
+function bracketLabel(tplId){
+  if(tplId.startsWith('GF')) return 'Grand Final';
+  const [b,r]=tplId.split('-'); const bn=b==='W'?'Winners':'Losers'; const rn=r.replace('R','Round ');
+  return `${bn} ${rn}`;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ▌ DB OPS
+// ══════════════════════════════════════════════════════════════════
+async function loadSession(){
+  const {data}=await sb.from('game_sessions').select('*').order('created_at',{ascending:false}).limit(1);
+  session=data&&data.length?data[0]:null;
+  if(session){ await Promise.all([loadNominations(),loadMatchups()]); }
+}
+async function loadNominations(){
+  const {data}=await sb.from('nominations').select('*').eq('session_id',session.id).order('created_at');
+  nominations=data||[];
+}
+async function loadMatchups(){
+  const {data}=await sb.from('matchups').select('*').eq('session_id',session.id).order('round').order('position');
+  matchups=data||[];
+}
+async function loadActiveVotes(){
+  const a=activeMatchup();
+  if(!a){ activeVotes=[]; return; }
+  const {data}=await sb.from('votes').select('*').eq('matchup_id',a.id);
+  activeVotes=data||[];
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ▌ REALTIME
+// ══════════════════════════════════════════════════════════════════
+function setupRealtime(){
+  sb.channel('gamenight')
+    .on('postgres_changes',{event:'*',schema:'public',table:'nominations'},async()=>{
+      await loadNominations();
+      if(activeScreen==='screen-nominate') renderNomScreen();
+    })
+    .on('postgres_changes',{event:'*',schema:'public',table:'game_sessions'},async()=>{
+      await loadSession();
+      updateHeader();
+      if(activeScreen==='screen-vote') renderVoteScreen();
+    })
+    .on('postgres_changes',{event:'*',schema:'public',table:'matchups'},async()=>{
+      await loadMatchups();
+      await loadActiveVotes();
+      updateHeader();
+      const a=activeMatchup();
+      document.getElementById('tab-vote').classList.toggle('has-ping',!!a);
+      if(activeScreen==='screen-bracket') renderBracket();
+      if(activeScreen==='screen-vote') renderVoteScreen();
+      if(activeScreen==='screen-admin') renderAdminContent();
+    })
+    .on('postgres_changes',{event:'*',schema:'public',table:'votes'},async()=>{
+      await loadActiveVotes();
+      if(activeScreen==='screen-vote') renderVoteScreen();
+      if(activeScreen==='screen-admin') renderAdminContent();
+    })
+    .subscribe();
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ▌ BRACKET GENERATION
+// ══════════════════════════════════════════════════════════════════
+async function generateBracket(){
+  const shuffled=[...nominations].sort(()=>Math.random()-.5);
+  const tpl=buildTemplate(shuffled.length);
+
+  // Insert all matchup rows
+  const rows=tpl.map(t=>({
+    session_id:session.id, template_id:t.id,
+    bracket:t.b==='W'?'winners':t.b==='L'?'losers':'grand_final',
+    round:t.r, position:t.p, status:'pending',
+  }));
+  const {data:inserted,error}=await sb.from('matchups').insert(rows).select();
+  if(error){ toast('Error generating bracket: '+error.message,'err'); return false; }
+
+  // Build tplId → DB row map (local, not global matchups yet)
+  const dbMap={};
+  inserted.forEach(m=>dbMap[m.template_id]=m);
+
+  // Assign seeds to W-R1 matchups
+  const r1s=inserted.filter(m=>m.bracket==='winners'&&m.round===1).sort((a,b)=>a.position-b.position);
+  for(let i=0;i<r1s.length;i++){
+    const g1=shuffled[i*2]||null, g2=shuffled[i*2+1]||null;
+    const upd={};
+    if(g1) upd.game1_id=g1.id;
+    if(g2) upd.game2_id=g2.id;
+    if(g1&&!g2){ upd.winner_id=g1.id; upd.status='complete'; }
+    else if(!g1&&g2){ upd.winner_id=g2.id; upd.status='complete'; }
+    else if(!g1&&!g2){ upd.status='bye'; }
+    if(Object.keys(upd).length){
+      await sb.from('matchups').update(upd).eq('id',r1s[i].id);
+      Object.assign(dbMap[r1s[i].template_id],upd);
+    }
+  }
+
+  // Route W-R1 winners/losers forward + cascade byes
+  await cascadeByes(dbMap,tpl);
+
+  // Set session to bracket phase
+  await sb.from('game_sessions').update({phase:'bracket'}).eq('id',session.id);
+  return true;
+}
+
+async function cascadeByes(dbMap,tpl){
+  // Route winners and losers from completed matchups
+  // Then cascade: if destination gets one slot filled and other feeder is 'bye', auto-advance
+  let changed=true;
+  while(changed){
+    changed=false;
+    for(const tplId in dbMap){
+      const m=dbMap[tplId];
+      // Route completed matchups
+      if((m.status==='complete'||m.status==='bye')&&m._routed!==true){
+        m._routed=true;
+        changed=true;
+        const t=tpl.find(x=>x.id===tplId);
+        if(!t) continue;
+        // Route winner
+        if(t.winTo&&m.winner_id&&dbMap[t.winTo]){
+          const dest=dbMap[t.winTo]; const field=t.winS===1?'game1_id':'game2_id';
+          if(!dest[field]){
+            await sb.from('matchups').update({[field]:m.winner_id}).eq('id',dest.id);
+            dest[field]=m.winner_id;
+          }
+        }
+        // Route loser (only if not a bye and loser destination exists)
+        if(t.loseTo&&m.loser_id&&dbMap[t.loseTo]){
+          const dest=dbMap[t.loseTo]; const field=t.loseS===1?'game1_id':'game2_id';
+          if(!dest[field]){
+            await sb.from('matchups').update({[field]:m.loser_id}).eq('id',dest.id);
+            dest[field]=m.loser_id;
+          }
+        }
+      }
+      // Check for single-bye cascade: one slot filled, other feeder is 'bye'
+      if(m.status==='pending'){
+        const hasG1=!!m.game1_id, hasG2=!!m.game2_id;
+        if(hasG1===hasG2) continue; // both or neither
+        const t=tpl.find(x=>x.id===tplId); if(!t) continue;
+        const emptySlot=hasG1?2:1;
+        // Find which template feeds this slot
+        const feederTpl=tpl.find(x=>
+          (x.winTo===tplId&&x.winS===emptySlot)||(x.loseTo===tplId&&x.loseS===emptySlot)
+        );
+        if(feederTpl&&dbMap[feederTpl.id]?.status==='bye'){
+          // The feeder was a double-bye → this slot will never be filled → auto-advance
+          const winnerId=hasG1?m.game1_id:m.game2_id;
+          await sb.from('matchups').update({winner_id:winnerId,status:'complete'}).eq('id',m.id);
+          m.winner_id=winnerId; m.status='complete'; m._routed=false;
+          changed=true;
+        }
+      }
+    }
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ▌ MATCH COMPLETION (route winner/loser after a real match)
+// ══════════════════════════════════════════════════════════════════
+async function completeMatch(matchupId, winnerId, loserId){
+  await sb.from('matchups').update({winner_id:winnerId,loser_id:loserId,status:'complete'}).eq('id',matchupId);
+  await loadMatchups();
+
+  const m=matchups.find(x=>x.id===matchupId); if(!m) return;
+  const tpl=getTpl(m.template_id); if(!tpl) return;
+
+  // Route winner
+  if(tpl.winTo&&winnerId){
+    const dest=matchupByTplId(tpl.winTo);
+    if(dest){ const f=tpl.winS===1?'game1_id':'game2_id'; await sb.from('matchups').update({[f]:winnerId}).eq('id',dest.id); }
+  }
+  // Route loser
+  if(tpl.loseTo&&loserId){
+    const dest=matchupByTplId(tpl.loseTo);
+    if(dest){ const f=tpl.loseS===1?'game1_id':'game2_id'; await sb.from('matchups').update({[f]:loserId}).eq('id',dest.id); }
+  }
+  // Check if this is the GF → tournament over
+  if(m.template_id==='GF-P1'){
+    await sb.from('game_sessions').update({phase:'complete',winner_game_id:winnerId}).eq('id',session.id);
+  }
+  // Cascade any single-byes that result
+  await loadMatchups();
+  await checkAndCascade();
+  tieMatchupId=null;
+}
+
+async function checkAndCascade(){
+  // After a real match, check if any pending matchup became a single-bye
+  const tpl=getTemplate(); if(!tpl) return;
+  let changed=true;
+  while(changed){
+    changed=false;
+    await loadMatchups();
+    for(const m of matchups){
+      if(m.status!=='pending') continue;
+      const hasG1=!!m.game1_id, hasG2=!!m.game2_id;
+      if(hasG1===hasG2) continue;
+      const t=tpl.find(x=>x.id===m.template_id); if(!t) continue;
+      const emptySlot=hasG1?2:1;
+      const feederTpl=tpl.find(x=>(x.winTo===m.template_id&&x.winS===emptySlot)||(x.loseTo===m.template_id&&x.loseS===emptySlot));
+      if(feederTpl){
+        const feeder=matchups.find(x=>x.template_id===feederTpl.id);
+        if(feeder&&feeder.status==='bye'){
+          const winnerId=hasG1?m.game1_id:m.game2_id;
+          await sb.from('matchups').update({winner_id:winnerId,status:'complete'}).eq('id',m.id);
+          const t2=getTpl(m.template_id);
+          if(t2&&t2.winTo&&winnerId){
+            const dest=matchupByTplId(t2.winTo);
+            if(dest){ const f=t2.winS===1?'game1_id':'game2_id'; await sb.from('matchups').update({[f]:winnerId}).eq('id',dest.id); }
+          }
+          changed=true; break;
+        }
+      }
+    }
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ▌ VOTING
+// ══════════════════════════════════════════════════════════════════
+async function castVote(matchupId, gameId){
+  const {error}=await sb.from('votes').insert({matchup_id:matchupId,game_id:gameId,device_token:deviceToken});
+  if(error){
+    if(error.code==='23505') toast('Already voted!','err');
+    else toast('Vote failed: '+error.message,'err');
+    return;
+  }
+  toast('Voted ✓','ok');
+  await loadActiveVotes(); renderVoteScreen();
+}
+function myVote(matchupId){ return activeVotes.find(v=>v.device_token===deviceToken&&v.matchup_id===matchupId); }
+
+// ══════════════════════════════════════════════════════════════════
+// ▌ ADMIN ACTIONS
+// ══════════════════════════════════════════════════════════════════
+async function adminCreateSession(){
+  const pw=document.getElementById('new-pw').value.trim();
+  const max=parseInt(document.getElementById('new-max').value)||2;
+  if(!pw){ toast('Set a password','err'); return; }
+  const {data,error}=await sb.from('game_sessions').insert({admin_password:pw,max_noms_per_person:max,phase:'nominating'}).select().single();
+  if(error){ toast('Error: '+error.message,'err'); return; }
+  session=data; nominations=[]; matchups=[];
+  toast('Session created!','ok'); renderAdminContent(); updateHeader();
+}
+function adminLogin(){
+  if(!session){ toast('No session exists yet','err'); return; }
+  if(document.getElementById('admin-pw-input').value===session.admin_password){
+    isAdmin=true;
+    document.getElementById('admin-gate').style.display='none';
+    document.getElementById('admin-panel').style.display='block';
+    renderAdminContent(); toast('Admin access granted','ok');
+  } else { toast('Wrong password','err'); }
+}
+async function adminLockAndGenerate(){
+  if(nominations.length<2){ toast('Need at least 2 nominations','err'); return; }
+  if(!confirm(`Lock ${nominations.length} nominations and generate the bracket?`)) return;
+  toast('Generating bracket...');
+  const ok=await generateBracket();
+  if(ok){ await loadSession(); renderAdminContent(); nav('screen-bracket'); }
+}
+async function adminStartVoting(matchupId){
+  if(activeMatchup()){ toast('Finish the current match first','err'); return; }
+  await sb.from('matchups').update({status:'voting'}).eq('id',matchupId);
+  await loadActiveVotes(); toast('Voting started!','ok');
+}
+async function adminReveal(matchupId){
+  await sb.from('matchups').update({status:'revealing'}).eq('id',matchupId);
+  toast('Votes revealed!','ok');
+}
+async function adminComplete(matchupId){
+  const m=matchups.find(x=>x.id===matchupId); if(!m) return;
+  const {data:votes}=await sb.from('votes').select('*').eq('matchup_id',matchupId);
+  const g1v=(votes||[]).filter(v=>v.game_id===m.game1_id).length;
+  const g2v=(votes||[]).filter(v=>v.game_id===m.game2_id).length;
+  if(g1v===g2v){
+    tieMatchupId=matchupId;
+    toast('Tie! Pick the winner below.','err');
+    renderVoteScreen(); renderBracket(); return;
+  }
+  tieMatchupId=null;
+  const winner=g1v>g2v?m.game1_id:m.game2_id;
+  const loser =g1v>g2v?m.game2_id:m.game1_id;
+  await completeMatch(matchupId,winner,loser);
+  toast('Match complete!','ok');
+}
+async function adminForceWinner(matchupId,winnerId){
+  const m=matchups.find(x=>x.id===matchupId); if(!m) return;
+  const loserId=winnerId===m.game1_id?m.game2_id:m.game1_id;
+  tieMatchupId=null;
+  await completeMatch(matchupId,winnerId,loserId);
+  toast('Winner set!','ok');
+}
+async function adminReset(){
+  if(!confirm('Reset entire session? All data will be deleted.')) return;
+  if(!confirm('Sure? This cannot be undone.')) return;
+  await sb.from('game_sessions').delete().eq('id',session.id);
+  session=null; nominations=[]; matchups=[]; isAdmin=false;
+  document.getElementById('admin-gate').style.display='block';
+  document.getElementById('admin-panel').style.display='none';
+  document.getElementById('nav-tabs').classList.remove('show');
+  nav('screen-lobby'); renderLobby(); updateHeader(); toast('Session reset','ok');
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ▌ NAVIGATION
+// ══════════════════════════════════════════════════════════════════
+function nav(id){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  activeScreen=id;
+  document.querySelectorAll('.nav-tab').forEach((t,i)=>{
+    t.classList.toggle('active',['screen-nominate','screen-bracket','screen-vote'][i]===id);
+  });
+  if(id==='screen-nominate') renderNomScreen();
+  if(id==='screen-bracket')  renderBracket();
+  if(id==='screen-vote')     renderVoteScreen();
+  if(id==='screen-admin')    renderAdminContent();
+}
+function toggleAdmin(){ nav(activeScreen==='screen-admin'?(session?'screen-nominate':'screen-lobby'):'screen-admin'); }
+
+// ══════════════════════════════════════════════════════════════════
+// ▌ RENDERING — HEADER
+// ══════════════════════════════════════════════════════════════════
+function updateHeader(){
+  document.getElementById('header-nick').textContent=nickname?`👤 ${nickname}`:'';
+  const ph=document.getElementById('header-phase');
+  if(!session){ ph.textContent=''; ph.className=''; return; }
+  const labels={nominating:'Nominations Open',bracket:'Tournament Active',complete:'🏆 Complete'};
+  ph.textContent=labels[session.phase]||session.phase;
+  ph.className='ph-'+session.phase;
+  const a=activeMatchup();
+  document.getElementById('tab-vote').classList.toggle('has-ping',!!a);
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ▌ RENDERING — LOBBY
+// ══════════════════════════════════════════════════════════════════
+function renderLobby(){
+  const el=document.getElementById('lobby-card');
+  if(!session){
+    el.innerHTML=`<h2>NO ACTIVE SESSION</h2>
+      <p style="color:var(--text-dim);font-size:14px;margin-bottom:20px;">Ask the host to create a session, or create one yourself via Admin.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-amber" onclick="toggleAdmin()">CREATE SESSION</button>
+        <button class="btn btn-ghost" onclick="init()">REFRESH</button>
+      </div>`;
+    return;
+  }
+  if(!nickname){
+    el.innerHTML=`<h2>JOIN SESSION</h2>
+      <div class="form-group">
+        <label>Your Nickname</label>
+        <input type="text" id="nick-input" placeholder="Enter your name" maxlength="20"
+          onkeydown="if(event.key==='Enter')enterNick()">
+      </div>
+      <button class="btn btn-cyan" style="width:100%;" onclick="enterNick()">JOIN 🎮</button>`;
+    setTimeout(()=>{ const el=document.getElementById('nick-input'); if(el) el.focus(); },50);
+    return;
+  }
+  // Has session + nickname: redirect
+  document.getElementById('nav-tabs').classList.add('show');
+  const a=activeMatchup();
+  if(session.phase==='bracket'&&a) nav('screen-vote');
+  else if(session.phase==='bracket'||session.phase==='complete') nav('screen-bracket');
+  else nav('screen-nominate');
+}
+function enterNick(){
+  const el=document.getElementById('nick-input'); if(!el) return;
+  const n=el.value.trim(); if(!n) return;
+  nickname=n; localStorage.setItem('nickname',n);
+  document.getElementById('header-nick').textContent=`👤 ${n}`;
+  document.getElementById('nav-tabs').classList.add('show');
+  renderLobby();
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ▌ RENDERING — NOMINATIONS
+// ══════════════════════════════════════════════════════════════════
+function renderNomScreen(){
+  const mine=nominations.filter(n=>n.submitted_by===nickname);
+  const max=session?.max_noms_per_person||2;
+  const canNom=session?.phase==='nominating'&&mine.length<max;
+  document.getElementById('nom-count-badge').textContent=`${nominations.length} nominated`;
+
+  const st=document.getElementById('nom-my-status');
+  if(session?.phase!=='nominating'){
+    st.innerHTML=`<div class="nom-status-msg" style="color:var(--amber);">🔒 Nominations are closed</div>`;
+  } else if(mine.length>=max){
+    st.innerHTML=`<div class="nom-status-msg" style="color:var(--green);">✓ You've submitted ${mine.length}/${max} nomination${max>1?'s':''}</div>`;
+  } else {
+    st.innerHTML=`<div class="nom-status-msg" style="color:var(--text-dim);">Submit up to <strong>${max}</strong> game${max>1?'s':''} &mdash; ${mine.length}/${max} done</div>`;
+  }
+
+  document.getElementById('nom-form-area').innerHTML=canNom?`
+    <div class="nom-form">
+      <input type="text" id="nom-input" placeholder="Game name..." maxlength="60"
+        onkeydown="if(event.key==='Enter')submitNom()">
+      <button class="btn btn-cyan" onclick="submitNom()">NOMINATE</button>
+    </div>
+  `:'';
+
+  const list=document.getElementById('nom-list');
+  if(!nominations.length){
+    list.innerHTML=`<div style="text-align:center;color:var(--text-muted);padding:20px;">No nominations yet</div>`;
+    return;
+  }
+  list.innerHTML=nominations.map(n=>{
+    const mine2=n.submitted_by===nickname;
+    return `<div class="nom-item${mine2?' mine':''}">
+      <span class="nom-game">${esc(n.game_name)}</span>
+      <span class="nom-by">${esc(n.submitted_by)}${mine2?' (you)':''}</span>
+    </div>`;
+  }).join('');
+}
+async function submitNom(){
+  const el=document.getElementById('nom-input'); if(!el) return;
+  const name=el.value.trim(); if(!name) return;
+  if(nominations.some(n=>n.game_name.toLowerCase()===name.toLowerCase())){
+    toast('Already nominated!','err'); return;
+  }
+  const max=session?.max_noms_per_person||2;
+  if(nominations.filter(n=>n.submitted_by===nickname).length>=max){
+    toast(`Max ${max} nominations per person`,'err'); return;
+  }
+  const {error}=await sb.from('nominations').insert({session_id:session.id,game_name:name,submitted_by:nickname});
+  if(error){ toast('Error: '+error.message,'err'); return; }
+  el.value=''; toast(`"${name}" nominated!`,'ok');
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ▌ RENDERING — BRACKET
+// ══════════════════════════════════════════════════════════════════
+function renderBracket(){
+  const el=document.getElementById('bracket-container');
+  if(!matchups.length){
+    el.innerHTML=`<div style="text-align:center;padding:60px;color:var(--text-muted);">Bracket not generated yet</div>`;
+    return;
+  }
+  const tpl=getTemplate();
+  const W=matchups.filter(m=>m.bracket==='winners');
+  const L=matchups.filter(m=>m.bracket==='losers');
+  const GF=matchups.filter(m=>m.bracket==='grand_final');
+  const wRounds=[...new Set(W.map(m=>m.round))].sort((a,b)=>a-b);
+  const lRounds=[...new Set(L.map(m=>m.round))].sort((a,b)=>a-b);
+  const maxWR=Math.max(...wRounds);
+
+  // Champion banner if complete
+  let champHtml='';
+  if(session?.phase==='complete'&&session.winner_game_id){
+    const c=nominations.find(n=>n.id===session.winner_game_id);
+    champHtml=`<div class="champ-banner">
+      <div class="champ-emoji">🏆</div>
+      <div class="champ-label">TONIGHT WE PLAY</div>
+      <div class="champ-name">${esc(c?.game_name||'Champion')}</div>
+    </div>`;
+  }
+
+  el.innerHTML=champHtml+`
+    <div class="bracket-section">
+      <div class="b-section-label winners">WINNERS BRACKET</div>
+      <div class="bracket-rounds">
+        ${wRounds.map(r=>{
+          const ms=W.filter(m=>m.round===r).sort((a,b)=>a.position-b.position);
+          const label=r===maxWR?'Winners Final':`Round ${r}`;
+          return `<div class="bracket-col">
+            <div class="round-label">${label}</div>
+            <div class="round-matches">${ms.map((m,i)=>(i>0?'<div class="b-spacer"></div>':'')+cardHtml(m,tpl)).join('')}</div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+    ${L.length?`
+    <div class="bracket-section">
+      <div class="b-section-label losers">LOSERS BRACKET</div>
+      <div class="bracket-rounds">
+        ${lRounds.map(r=>{
+          const ms=L.filter(m=>m.round===r).sort((a,b)=>a.position-b.position);
+          return `<div class="bracket-col">
+            <div class="round-label">Round ${r}</div>
+            <div class="round-matches">${ms.map((m,i)=>(i>0?'<div class="b-spacer"></div>':'')+cardHtml(m,tpl)).join('')}</div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`:''}
+    ${GF.length?`
+    <div class="bracket-section">
+      <div class="b-section-label gf">GRAND FINAL</div>
+      <div class="bracket-rounds">
+        <div class="bracket-col">${GF.map(m=>cardHtml(m,tpl)).join('')}</div>
+      </div>
+    </div>`:''}
+  `;
+}
+
+function cardHtml(m,tpl){
+  const g1=m.game1_id?nominations.find(n=>n.id===m.game1_id):null;
+  const g2=m.game2_id?nominations.find(n=>n.id===m.game2_id):null;
+  const g1cls=m.status==='complete'||m.status==='bye'?(m.winner_id===m.game1_id?'won':'lost'):'';
+  const g2cls=m.status==='complete'||m.status==='bye'?(m.winner_id===m.game2_id?'won':'lost'):'';
+  const pills={pending:'st-pill-pending',voting:'st-pill-voting',revealing:'st-pill-revealing',complete:'st-pill-complete',bye:'st-pill-bye'};
+  const pillLabels={pending:'Pending',voting:'🔴 Voting',revealing:'👁 Revealed',complete:'✓ Done',bye:'Bye'};
+  const isTie=tieMatchupId===m.id;
+
+  const canStart=isAdmin&&m.status==='pending'&&m.game1_id&&m.game2_id;
+  const canReveal=isAdmin&&m.status==='voting';
+  const canComplete=isAdmin&&m.status==='revealing';
+  const adminHtml=isAdmin&&(canStart||canReveal||canComplete)?`
+    <div class="b-actions">
+      ${canStart?`<button class="btn btn-cyan btn-sm" onclick="adminStartVoting('${m.id}')">▶ Start</button>`:''}
+      ${canReveal?`<button class="btn btn-amber btn-sm" onclick="adminReveal('${m.id}')">👁 Reveal</button>`:''}
+      ${canComplete&&!isTie?`<button class="btn btn-green btn-sm" onclick="adminComplete('${m.id}')">✓ Complete</button>`:''}
+      ${isTie?`<div style="width:100%;"><div style="font-size:10px;color:var(--amber);margin-bottom:4px;">TIE — pick winner:</div>
+        ${g1?`<button class="btn btn-ghost btn-sm" style="width:100%;margin-bottom:4px;" onclick="adminForceWinner('${m.id}','${m.game1_id}')">${esc(g1.game_name)}</button>`:''}
+        ${g2?`<button class="btn btn-ghost btn-sm" style="width:100%;" onclick="adminForceWinner('${m.id}','${m.game2_id}')">${esc(g2.game_name)}</button>`:''}
+      </div>`:''}
+    </div>`:'';
+
+  return `<div class="b-card st-${m.status}">
+    <div class="b-card-top">
+      <span>${esc(m.template_id)}</span>
+      <span class="st-pill ${pills[m.status]||'st-pill-pending'}">${pillLabels[m.status]||m.status}</span>
+    </div>
+    <div class="b-game ${g1?g1cls:'tbd'}">${g1?esc(g1.game_name):'TBD'}</div>
+    <div class="b-vs">VS</div>
+    <div class="b-game ${g2?g2cls:'tbd'}">${g2?esc(g2.game_name):'TBD'}</div>
+    ${adminHtml}
+  </div>`;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ▌ RENDERING — VOTE SCREEN
+// ══════════════════════════════════════════════════════════════════
+function renderVoteScreen(){
+  const el=document.getElementById('vote-container');
+  const a=activeMatchup();
+
+  if(!a){
+    if(session?.phase==='complete'&&session.winner_game_id){
+      const c=nominations.find(n=>n.id===session.winner_game_id);
+      el.innerHTML=`<div class="champ-banner">
+        <div class="champ-emoji">🏆</div>
+        <div class="champ-label">TONIGHT WE PLAY</div>
+        <div class="champ-name">${esc(c?.game_name||'Champion')}</div>
+      </div>`;
+    } else {
+      el.innerHTML=`<div style="text-align:center;">
+        <div class="vote-label">WAITING FOR HOST</div>
+        <div style="color:var(--text-muted);font-size:14px;margin-top:8px;">The next match will start soon</div>
+        <div class="pulse-row" style="margin-top:20px;"><div class="dot"></div><span>Standby...</span></div>
+      </div>`;
+    }
+    return;
+  }
+
+  const g1=nominations.find(n=>n.id===a.game1_id);
+  const g2=nominations.find(n=>n.id===a.game2_id);
+  const mv=myVote(a.id);
+  const revealing=a.status==='revealing';
+  const g1v=activeVotes.filter(v=>v.game_id===a.game1_id).length;
+  const g2v=activeVotes.filter(v=>v.game_id===a.game2_id).length;
+  const total=activeVotes.length;
+  const isTie=tieMatchupId===a.id;
+
+  let g1cls='', g2cls='';
+  if(mv?.game_id===a.game1_id) g1cls='my-pick';
+  if(mv?.game_id===a.game2_id) g2cls='my-pick';
+  if(revealing){
+    if(g1v>g2v){ g1cls='win-reveal'; g2cls='lose-reveal'; }
+    else if(g2v>g1v){ g2cls='win-reveal'; g1cls='lose-reveal'; }
+    else { g1cls='tie-reveal'; g2cls='tie-reveal'; }
+  }
+
+  const barG1=total>0?Math.round(g1v/total*100):50;
+  const barG2=100-barG1;
+
+  el.innerHTML=`
+    <div class="vote-label">CURRENT MATCH</div>
+    <div class="vote-round-name">${esc(bracketLabel(a.template_id))}</div>
+    <div class="vote-arena">
+      <div class="vote-card ${g1cls} ${mv?'voted':''} ${revealing?'revealing':''}"
+           onclick="${!mv&&!revealing?`castVote('${a.id}','${a.game1_id}')`:''}" style="${!mv&&!revealing?'':'cursor:default'}">
+        ${mv?.game_id===a.game1_id?'<span class="v-my-badge">YOUR VOTE</span>':''}
+        <div class="v-game-name">${esc(g1?.game_name||'TBD')}</div>
+        ${revealing?`<div class="v-vote-count">${g1v}</div><div class="v-vote-label">vote${g1v!==1?'s':''}</div>`:''}
+      </div>
+      <div class="vote-vs">VS</div>
+      <div class="vote-card ${g2cls} ${mv?'voted':''} ${revealing?'revealing':''}"
+           onclick="${!mv&&!revealing?`castVote('${a.id}','${a.game2_id}')`:''}" style="${!mv&&!revealing?'':'cursor:default'}">
+        ${mv?.game_id===a.game2_id?'<span class="v-my-badge">YOUR VOTE</span>':''}
+        <div class="v-game-name">${esc(g2?.game_name||'TBD')}</div>
+        ${revealing?`<div class="v-vote-count">${g2v}</div><div class="v-vote-label">vote${g2v!==1?'s':''}</div>`:''}
+      </div>
+    </div>
+    ${revealing?`<div class="vote-bar"><div class="bg1" style="width:${barG1}%"></div><div class="bg2" style="width:${barG2}%"></div></div>`:''}
+    <div class="vote-status">
+      ${revealing
+        ? `${total} vote${total!==1?'s':''} &mdash; ${g1v===g2v?'🤝 Tie!':'🏆 '+esc(g1v>g2v?(g1?.game_name||'?'):(g2?.game_name||'?'))+' wins!'}`
+        : mv
+          ? `<div class="pulse-row"><div class="dot"></div><span>Vote cast! Waiting for host to reveal...</span></div>`
+          : `👆 Click a game to cast your vote <span style="color:var(--text-muted)">(${total} cast so far)</span>`
+      }
+    </div>
+    ${isAdmin?`
+    <div class="vote-admin-row">
+      ${a.status==='voting'?`<button class="btn btn-amber" onclick="adminReveal('${a.id}')">👁 Reveal Votes</button>`:''}
+      ${a.status==='revealing'&&!isTie?`<button class="btn btn-green" onclick="adminComplete('${a.id}')">✓ Complete Match</button>`:''}
+    </div>
+    ${isTie?`<div class="tie-pick" style="display:block;">
+      <div class="tie-pick-label">🤝 TIE — You pick the winner:</div>
+      <div class="tie-pick-btns">
+        ${g1?`<button class="btn btn-ghost" onclick="adminForceWinner('${a.id}','${a.game1_id}')">${esc(g1.game_name)}</button>`:''}
+        ${g2?`<button class="btn btn-ghost" onclick="adminForceWinner('${a.id}','${a.game2_id}')">${esc(g2.game_name)}</button>`:''}
+      </div>
+    </div>`:''}
+    `:''}
+  `;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ▌ RENDERING — ADMIN PANEL
+// ══════════════════════════════════════════════════════════════════
+function renderAdminContent(){
+  if(!isAdmin) return;
+  const el=document.getElementById('admin-content'); if(!el) return;
+
+  if(!session){
+    el.innerHTML=`<div class="admin-sec">
+      <h3>CREATE SESSION</h3>
+      <div class="form-group"><label>Admin Password</label><input type="password" id="new-pw" placeholder="Set a password"></div>
+      <div class="form-group"><label>Max nominations per person</label><input type="number" id="new-max" value="2" min="1" max="5" style="width:80px;"></div>
+      <button class="btn btn-amber" onclick="adminCreateSession()">CREATE SESSION</button>
+    </div>`;
+    return;
+  }
+
+  const a=activeMatchup();
+  el.innerHTML=`
+    <div class="admin-sec">
+      <h3>SESSION INFO</h3>
+      <div class="info-grid">
+        <div class="info-row"><span class="info-k">Phase</span><span class="info-v hi">${session.phase.toUpperCase()}</span></div>
+        <div class="info-row"><span class="info-k">Games nominated</span><span class="info-v">${nominations.length}</span></div>
+        <div class="info-row"><span class="info-k">Max per person</span><span class="info-v">${session.max_noms_per_person}</span></div>
+        ${a?`<div class="info-row"><span class="info-k">Active match</span><span class="info-v hi">${a.template_id} (${a.status})</span></div>
+        <div class="info-row"><span class="info-k">Votes cast</span><span class="info-v">${activeVotes.length}</span></div>`:''}
+      </div>
+    </div>
+    ${session.phase==='nominating'?`
+    <div class="admin-sec">
+      <h3>GENERATE BRACKET</h3>
+      <p style="font-size:13px;color:var(--text-dim);margin-bottom:12px;">${nominations.length} game${nominations.length!==1?'s':''} nominated. Lock and shuffle into a bracket when everyone is ready.</p>
+      <button class="btn btn-cyan" onclick="adminLockAndGenerate()" ${nominations.length<2?'disabled':''}>🎲 Lock & Generate Bracket</button>
+    </div>`:''}
+    ${session.phase==='complete'?`
+    <div class="admin-sec">
+      <h3>🏆 TOURNAMENT COMPLETE</h3>
+      <div style="font-family:var(--font-h);font-size:22px;color:var(--green);margin-bottom:8px;">${esc(nominations.find(n=>n.id===session.winner_game_id)?.game_name||'Unknown')}</div>
+      <p style="color:var(--text-dim);font-size:13px;">That's what you're playing tonight. Good choice.</p>
+    </div>`:''}
+    <div class="admin-sec">
+      <h3>DANGER ZONE</h3>
+      <button class="btn btn-red btn-sm" onclick="adminReset()">🗑 Reset Session</button>
+    </div>
+  `;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ▌ INIT
+// ══════════════════════════════════════════════════════════════════
+async function init(){
+  deviceToken=localStorage.getItem('dt')||uuid();
+  localStorage.setItem('dt',deviceToken);
+  nickname=localStorage.getItem('nickname')||'';
+  if(nickname) document.getElementById('header-nick').textContent=`👤 ${nickname}`;
+
+  sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+  await loadSession();
+  if(session) await loadActiveVotes();
+  setupRealtime();
+  updateHeader();
+
+  if(session&&nickname){
+    document.getElementById('nav-tabs').classList.add('show');
+    const a=activeMatchup();
+    if(session.phase==='bracket'&&a) nav('screen-vote');
+    else if(session.phase==='bracket'||session.phase==='complete') nav('screen-bracket');
+    else nav('screen-nominate');
+    renderNomScreen();
+  } else {
+    nav('screen-lobby');
+    renderLobby();
+  }
+}
+
+init();
+</script>
+</body>
+</html>
