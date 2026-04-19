@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>🎮 Game Night Bracket</title>
+  <title>🗳️ Democracy Gaming</title>
 
   <!--
   ══════════════════════════════════════════════════════════════════
@@ -338,6 +338,12 @@
     .form-group { margin-bottom: 14px; }
     .mt12 { margin-top: 12px; }
     .mt16 { margin-top: 16px; }
+    .v-voters { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; }
+    .v-voter-chip {
+      font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 10px;
+      background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12);
+      color: var(--text-dim); letter-spacing: 0.3px;
+    }
     @media(max-width:520px){
       .vote-arena { flex-direction: column; }
       .vote-vs { padding: 8px 0; font-size: 18px; }
@@ -349,7 +355,7 @@
 
 <!-- ── Header ──────────────────────────────────────────────────── -->
 <header id="header">
-  <div class="logo">🎮 GAME NIGHT</div>
+  <div class="logo">🗳️ DEMOCRACY GAMING</div>
   <div id="header-right">
     <span id="header-nick"></span>
     <span id="header-phase"></span>
@@ -369,8 +375,8 @@
 
 <!-- ── Lobby ───────────────────────────────────────────────────── -->
 <div id="screen-lobby" class="screen active">
-  <div class="lobby-title">GAME NIGHT</div>
-  <div class="lobby-sub">Bracket Tournament</div>
+  <div class="lobby-title">DEMOCRACY<br>GAMING</div>
+  <div class="lobby-sub">The Bois Decide &bull; Veto Rights Not Included</div>
   <div class="card lobby-card" id="lobby-card"></div>
 </div>
 
@@ -754,7 +760,7 @@ async function checkAndCascade(){
 // ▌ VOTING
 // ══════════════════════════════════════════════════════════════════
 async function castVote(matchupId, gameId){
-  const {error}=await sb.from('votes').insert({matchup_id:matchupId,game_id:gameId,device_token:deviceToken});
+  const {error}=await sb.from('votes').insert({matchup_id:matchupId,game_id:gameId,device_token:deviceToken,voter_name:nickname});
   if(error){
     if(error.code==='23505') toast('Already voted!','err');
     else toast('Vote failed: '+error.message,'err');
@@ -1105,6 +1111,9 @@ function renderVoteScreen(){
   const barG1=total>0?Math.round(g1v/total*100):50;
   const barG2=100-barG1;
 
+  const g1voters=activeVotes.filter(v=>v.game_id===a.game1_id).map(v=>v.voter_name||'?');
+  const g2voters=activeVotes.filter(v=>v.game_id===a.game2_id).map(v=>v.voter_name||'?');
+
   el.innerHTML=`
     <div class="vote-label">CURRENT MATCH</div>
     <div class="vote-round-name">${esc(bracketLabel(a.template_id))}</div>
@@ -1113,22 +1122,22 @@ function renderVoteScreen(){
            onclick="${!mv&&!revealing?`castVote('${a.id}','${a.game1_id}')`:''}" style="${!mv&&!revealing?'':'cursor:default'}">
         ${mv?.game_id===a.game1_id?'<span class="v-my-badge">YOUR VOTE</span>':''}
         <div class="v-game-name">${esc(g1?.game_name||'TBD')}</div>
-        ${revealing?`<div class="v-vote-count">${g1v}</div><div class="v-vote-label">vote${g1v!==1?'s':''}</div>`:''}
+        ${revealing?`<div class="v-vote-count">${g1v}</div><div class="v-vote-label">vote${g1v!==1?'s':''}</div>${g1voters.length?`<div class="v-voters">${g1voters.map(n=>`<span class="v-voter-chip">${esc(n)}</span>`).join('')}</div>`:''}`:''}
       </div>
       <div class="vote-vs">VS</div>
       <div class="vote-card ${g2cls} ${mv?'voted':''} ${revealing?'revealing':''}"
            onclick="${!mv&&!revealing?`castVote('${a.id}','${a.game2_id}')`:''}" style="${!mv&&!revealing?'':'cursor:default'}">
         ${mv?.game_id===a.game2_id?'<span class="v-my-badge">YOUR VOTE</span>':''}
         <div class="v-game-name">${esc(g2?.game_name||'TBD')}</div>
-        ${revealing?`<div class="v-vote-count">${g2v}</div><div class="v-vote-label">vote${g2v!==1?'s':''}</div>`:''}
+        ${revealing?`<div class="v-vote-count">${g2v}</div><div class="v-vote-label">vote${g2v!==1?'s':''}</div>${g2voters.length?`<div class="v-voters">${g2voters.map(n=>`<span class="v-voter-chip">${esc(n)}</span>`).join('')}</div>`:''}`:''}
       </div>
     </div>
     ${revealing?`<div class="vote-bar"><div class="bg1" style="width:${barG1}%"></div><div class="bg2" style="width:${barG2}%"></div></div>`:''}
     <div class="vote-status">
       ${revealing
-        ? `${total} vote${total!==1?'s':''} &mdash; ${g1v===g2v?'🤝 Tie!':'🏆 '+esc(g1v>g2v?(g1?.game_name||'?'):(g2?.game_name||'?'))+' wins!'}`
+        ? `${total} vote${total!==1?'s':''} &mdash; ${g1v===g2v?'🤝 Tie!':'🏆 '+esc(g1v>g2v?(g1?.game_name||'?'):(g2?.game_name||'?'))+' wins the people\'s vote!'}`
         : mv
-          ? `<div class="pulse-row"><div class="dot"></div><span>Vote cast! Waiting for host to reveal...</span></div>`
+          ? `<div class="pulse-row"><div class="dot"></div><span>Vote cast! Waiting for the reveal...</span></div>`
           : `👆 Click a game to cast your vote <span style="color:var(--text-muted)">(${total} cast so far)</span>`
       }
     </div>
