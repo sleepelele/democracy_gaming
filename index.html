@@ -648,7 +648,20 @@ function getTpl(tplId){ const t=getTemplate(); return t?t.find(x=>x.id===tplId):
 function matchupByTplId(tplId){ return matchups.find(m=>m.template_id===tplId); }
 function gameName(id){ const n=nominations.find(n=>n.id===id); return n?n.game_name:'TBD'; }
 function activeMatchup(){ return matchups.find(m=>m.status==='voting'||m.status==='revealing'); }
-function bracketLabel(tplId){
+let nominationsPollInterval = null;
+
+function startNominationsPolling(){
+  stopNominationsPolling();
+  nominationsPollInterval = setInterval(async()=>{
+    if(activeScreen==='screen-nominate'&&session){
+      await loadNominations();
+      renderNomScreen();
+    }
+  }, 4000);
+}
+function stopNominationsPolling(){
+  if(nominationsPollInterval){ clearInterval(nominationsPollInterval); nominationsPollInterval=null; }
+}
   if(tplId.startsWith('GF')) return 'Grand Final';
   const [b,r]=tplId.split('-'); const bn=b==='W'?'Winners':'Losers'; const rn=r.replace('R','Round ');
   return `${bn} ${rn}`;
@@ -1038,7 +1051,8 @@ function nav(id){
   document.querySelectorAll('.nav-tab').forEach((t,i)=>{
     t.classList.toggle('active',['screen-nominate','screen-bracket','screen-vote'][i]===id);
   });
-  if(id==='screen-nominate') renderNomScreen();
+  if(id==='screen-nominate'){ renderNomScreen(); startNominationsPolling(); }
+  else { stopNominationsPolling(); }
   if(id==='screen-bracket')  renderBracket();
   if(id==='screen-vote')     renderVoteScreen();
   if(id==='screen-admin')    renderAdminContent();
@@ -1210,6 +1224,7 @@ async function submitNom(){
   const {error}=await sb.from('nominations').insert({session_id:session.id,game_name:name,submitted_by:nickname});
   if(error){ toast('Error: '+error.message,'err'); return; }
   el.value=''; toast(`"${name}" nominated!`,'ok');
+  await loadNominations(); renderNomScreen();
 }
 
 // ══════════════════════════════════════════════════════════════════
