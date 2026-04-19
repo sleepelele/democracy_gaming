@@ -378,20 +378,72 @@
       color: var(--text-dim); letter-spacing: 0.5px;
     }
 
-    /* ── Coin flip ── */
-    .coin-flip-zone { margin-top: 28px; display: flex; flex-direction: column; align-items: center; gap: 16px; }
-    .coin-flip-label { font-family: var(--font-h); font-size: 15px; font-style: italic; color: var(--gold); letter-spacing: 1px; }
-    .coin-display {
-      font-family: var(--font-h); font-size: clamp(20px,4vw,32px); font-style: italic;
-      color: var(--cream); padding: 20px 36px;
-      background: var(--surface2); border: 1px solid var(--gold);
-      border-radius: var(--r); min-width: 260px; text-align: center;
-      box-shadow: 0 0 30px rgba(201,162,39,0.15);
-      transition: transform 0.1s ease;
+    /* ── Coin flip overlay ── */
+    #flip-overlay {
+      display: none; position: fixed; inset: 0; z-index: 500;
+      background: rgba(8,7,5,0.97);
+      flex-direction: column; align-items: center; justify-content: center;
+      text-align: center; padding: 24px;
     }
-    .coin-display.flipping { transform: scaleY(0.04); }
-    .coin-display.landed   { border-color: var(--gold-bright); background: var(--gold-dim); box-shadow: 0 0 40px rgba(201,162,39,0.3); }
-    .coin-winner-msg { font-size: 13px; color: var(--gold); font-style: italic; letter-spacing: 0.5px; }
+    #flip-overlay.active { display: flex; }
+    .flip-eyebrow {
+      font-size: 9px; font-weight: 500; letter-spacing: 5px; text-transform: uppercase;
+      color: var(--gold); opacity: 0.7; margin-bottom: 16px;
+    }
+    .flip-title {
+      font-family: var(--font-h); font-size: clamp(28px,6vw,52px);
+      font-style: italic; color: var(--cream); margin-bottom: 40px;
+      line-height: 1.1;
+    }
+    .flip-arena {
+      display: flex; align-items: center; gap: 0;
+      width: 100%; max-width: 680px; margin-bottom: 40px;
+    }
+    .flip-card {
+      flex: 1; padding: 28px 20px; border: 1px solid var(--border2);
+      border-radius: var(--r); background: var(--surface);
+      transition: all 0.25s ease;
+    }
+    .flip-card.active-pick {
+      border-color: var(--gold);
+      background: var(--gold-dim);
+      box-shadow: 0 0 60px rgba(201,162,39,0.3);
+      transform: scale(1.04);
+    }
+    .flip-card.winner-pick {
+      border-color: var(--gold-bright);
+      background: var(--gold-dim);
+      box-shadow: 0 0 80px rgba(232,188,58,0.45);
+      transform: scale(1.06);
+    }
+    .flip-card.loser-pick { opacity: 0.25; transform: scale(0.96); }
+    .flip-game-name {
+      font-family: var(--font-h); font-size: clamp(18px,3.5vw,30px);
+      font-style: italic; color: var(--cream); line-height: 1.2;
+    }
+    .flip-vs {
+      padding: 0 20px; font-family: var(--font-h);
+      font-size: 22px; font-style: italic; color: var(--text-muted); flex-shrink: 0;
+    }
+    .flip-indicator {
+      font-size: 11px; letter-spacing: 3px; text-transform: uppercase;
+      color: var(--text-muted); margin-bottom: 24px; min-height: 18px;
+    }
+    .flip-indicator.live { color: var(--gold); }
+    .flip-confirm { display: none; flex-direction: column; align-items: center; gap: 12px; }
+    .flip-confirm.show { display: flex; }
+    .flip-winner-announce {
+      font-family: var(--font-h); font-size: clamp(20px,4vw,36px);
+      font-style: italic; color: var(--gold);
+    }
+    @keyframes goldpulse {
+      0%,100% { box-shadow: 0 0 40px rgba(201,162,39,0.3); }
+      50%      { box-shadow: 0 0 90px rgba(232,188,58,0.6); }
+    }
+    .flip-card.winner-pick { animation: goldpulse 1.2s ease-in-out infinite; }
+
+    /* Inline coin flip zone (kept for non-overlay fallback) */
+    .coin-flip-zone { display: none; }
 
     /* ── Admin ── */
     #screen-admin { max-width: 560px; }
@@ -528,7 +580,21 @@
 <!-- ── Toast ───────────────────────────────────────────────────── -->
 <div id="toast"></div>
 
-<script>
+<!-- ── Tie-Breaker Overlay ──────────────────────────────────────── -->
+<div id="flip-overlay">
+  <div class="flip-eyebrow">The Market Cannot Decide</div>
+  <div class="flip-title" id="flip-title">It's a Tie — Fate Intervenes</div>
+  <div class="flip-arena">
+    <div class="flip-card" id="flip-card-1"><div class="flip-game-name" id="flip-name-1">—</div></div>
+    <div class="flip-vs">vs</div>
+    <div class="flip-card" id="flip-card-2"><div class="flip-game-name" id="flip-name-2">—</div></div>
+  </div>
+  <div class="flip-indicator" id="flip-indicator">Consulting the Oracle...</div>
+  <div class="flip-confirm" id="flip-confirm">
+    <div class="flip-winner-announce" id="flip-winner-announce"></div>
+    <button class="btn btn-amber" id="flip-confirm-btn" style="margin-top:12px;" onclick="confirmFlipResult()">✓ Lock It In</button>
+  </div>
+</div>
 // ══════════════════════════════════════════════════════════════════
 // ▌ CONFIG
 // ══════════════════════════════════════════════════════════════════
@@ -661,45 +727,83 @@ function bracketLabel(tplId){
 }
 
 // ══════════════════════════════════════════════════════════════════
-// ▌ COIN FLIP (triggered on 50/50 tie reveal)
+// ▌ TIE-BREAKER OVERLAY
 // ══════════════════════════════════════════════════════════════════
 function startCoinFlip(matchup, g1, g2){
-  if(coinFlip?.matchupId===matchup.id) return; // already running for this matchup
+  if(coinFlip?.matchupId===matchup.id) return;
   coinFlip={matchupId:matchup.id, running:true, winnerId:null, loserId:null};
 
   const games=[
     {id:matchup.game1_id, name:g1?.game_name||'Game 1'},
     {id:matchup.game2_id, name:g2?.game_name||'Game 2'},
   ];
+
+  // Set up overlay
+  document.getElementById('flip-name-1').textContent=games[0].name;
+  document.getElementById('flip-name-2').textContent=games[1].name;
+  document.getElementById('flip-card-1').className='flip-card';
+  document.getElementById('flip-card-2').className='flip-card';
+  document.getElementById('flip-indicator').textContent='Consulting the Oracle...';
+  document.getElementById('flip-indicator').className='flip-indicator';
+  document.getElementById('flip-confirm').className='flip-confirm';
+  document.getElementById('flip-winner-announce').textContent='';
+  document.getElementById('flip-overlay').classList.add('active');
+
+  // Animation — rapid switching slowing to a stop
   let cur=Math.floor(Math.random()*2);
   let flips=0;
-  const totalFlips=18+Math.floor(Math.random()*10);
-  let delay=55;
+  const totalFlips=22+Math.floor(Math.random()*12);
+  let delay=60;
+
+  const phrases=[
+    'Reading the market...','Consulting the Oracle...','Flipping the coin...',
+    'Asking the algorithm...','Bribing the judge...','Calculating fate...',
+    'Democracy in action...','Let the gods decide...'
+  ];
 
   function flip(){
     if(!coinFlip||coinFlip.matchupId!==matchup.id) return;
     cur=1-cur; flips++;
-    const el=document.getElementById('coin-display');
-    if(el){
-      el.classList.add('flipping');
-      setTimeout(()=>{
-        if(!el) return;
-        el.textContent=games[cur].name;
-        el.classList.remove('flipping');
-        if(flips>=totalFlips){
-          el.classList.add('landed');
-          coinFlip.running=false;
-          coinFlip.winnerId=games[cur].id;
-          coinFlip.loserId=games[1-cur].id;
-          setTimeout(()=>renderVoteScreen(),400);
-        }
-      }, Math.max(delay*0.45, 20));
+
+    document.getElementById('flip-card-1').className='flip-card'+(cur===0?' active-pick':'');
+    document.getElementById('flip-card-2').className='flip-card'+(cur===1?' active-pick':'');
+    document.getElementById('flip-indicator').textContent=phrases[flips%phrases.length];
+    document.getElementById('flip-indicator').className='flip-indicator live';
+
+    if(flips>=totalFlips){
+      // Landed!
+      coinFlip.running=false;
+      coinFlip.winnerId=games[cur].id;
+      coinFlip.loserId=games[1-cur].id;
+
+      document.getElementById('flip-card-1').className='flip-card'+(cur===0?' winner-pick':' loser-pick');
+      document.getElementById('flip-card-2').className='flip-card'+(cur===1?' winner-pick':' loser-pick');
+      document.getElementById('flip-indicator').textContent='The oracle has spoken.';
+      document.getElementById('flip-indicator').className='flip-indicator';
+      document.getElementById('flip-winner-announce').textContent=`"${games[cur].name}" advances`;
+
+      if(isAdmin){
+        document.getElementById('flip-confirm').className='flip-confirm show';
+      } else {
+        setTimeout(()=>renderVoteScreen(), 400);
+      }
+      return;
     }
-    if(flips>=totalFlips) return;
-    if(flips>totalFlips*0.5) delay=Math.min(delay*1.4, 520);
+
+    if(flips > totalFlips*0.55) delay = Math.min(delay*1.38, 480);
     setTimeout(flip, delay);
   }
-  setTimeout(flip, delay);
+
+  setTimeout(flip, 300);
+}
+
+async function confirmFlipResult(){
+  if(!coinFlip||!coinFlip.winnerId) return;
+  const overlay=document.getElementById('flip-overlay');
+  overlay.classList.remove('active');
+  const a=activeMatchup(); if(!a) return;
+  await completeMatch(a.id, coinFlip.winnerId, coinFlip.loserId);
+  toast('The oracle has decided. Match complete.','ok');
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -975,7 +1079,7 @@ function adminLogin(){
   } else { toast('Wrong password','err'); }
 }
 async function adminLockAndGenerate(){
-  if(nominations.length<2){ toast('Need at least 2 nominations','err'); return; }
+  if(nominations.length<4){ toast('Need at least 4 nominations to generate a bracket','err'); return; }
   if(!confirm(`Lock ${nominations.length} nominations and generate the bracket?`)) return;
   toast('Generating bracket...');
   const ok=await generateBracket();
@@ -1005,13 +1109,12 @@ async function adminComplete(matchupId){
   const g1v=(votes||[]).filter(v=>v.game_id===m.game1_id).length;
   const g2v=(votes||[]).filter(v=>v.game_id===m.game2_id).length;
   if(g1v===g2v){
-    // Kick off coin flip instead of manual pick
     const g1=nominations.find(n=>n.id===m.game1_id);
     const g2=nominations.find(n=>n.id===m.game2_id);
-    startCoinFlip(m,g1,g2);
     tieMatchupId=matchupId;
-    toast('🪙 IT\'S A TIE — COIN FLIP TIME!','');
-    renderVoteScreen(); return;
+    toast('🤝 Tie! The oracle decides...','');
+    startCoinFlip(m,g1,g2);
+    return;
   }
   tieMatchupId=null;
   const winner=g1v>g2v?m.game1_id:m.game2_id;
@@ -1371,7 +1474,7 @@ function renderVoteScreen(){
     else { g1cls='tie-reveal'; g2cls='tie-reveal'; }
   }
 
-  // Auto-start coin flip for everyone when tie is revealed
+  // Auto-start tie-breaker for everyone when a tie is revealed
   if(revealing&&isTie&&!coinFlip?.matchupId) startCoinFlip(a,g1,g2);
 
   const barG1=total>0?Math.round(g1v/total*100):50;
@@ -1476,8 +1579,8 @@ function renderAdminContent(){
     </div>
     <div class="admin-sec">
       <h3>GENERATE BRACKET</h3>
-      <p style="font-size:13px;color:var(--text-dim);margin-bottom:12px;">${nominations.length} game${nominations.length!==1?'s':''} nominated. Lock and shuffle into a bracket when everyone is ready.</p>
-      <button class="btn btn-cyan" onclick="adminLockAndGenerate()" ${nominations.length<2?'disabled':''}>🎲 Lock & Generate Bracket</button>
+      <p style="font-size:13px;color:var(--text-dim);margin-bottom:12px;">${nominations.length} game${nominations.length!==1?'s':''} nominated. Need at least 4 to generate a bracket.</p>
+      <button class="btn btn-cyan" onclick="adminLockAndGenerate()" ${nominations.length<4?'disabled':''}>🎲 Lock & Generate Bracket</button>
     </div>`:''}
     ${session.phase!=='nominating'&&joinRequests.length?`
     <div class="admin-sec">
