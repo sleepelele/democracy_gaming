@@ -621,10 +621,6 @@
 <div id="nav-tabs">
   <button class="nav-tab" id="tab-nominate" onclick="nav('screen-nominate')">NOMINATIONS</button>
   <button class="nav-tab" id="tab-bracket" onclick="nav('screen-bracket')">BRACKET</button>
-  <button class="nav-tab" id="tab-vote" onclick="nav('screen-vote')">
-    VOTE
-    <span class="vote-ping"></span>
-  </button>
   <button class="nav-tab" id="tab-admin" onclick="nav('screen-admin')" style="display:none;">ADMIN</button>
 </div>
 
@@ -823,7 +819,7 @@ function getTemplate(){
 function getTpl(tplId){ const t=getTemplate(); return t?t.find(x=>x.id===tplId):null; }
 function matchupByTplId(tplId){ return matchups.find(m=>m.template_id===tplId); }
 function gameName(id){ const n=nominations.find(n=>n.id===id); return n?n.game_name:'TBD'; }
-function activeMatchup(){ return matchups.find(m=>m.status==='voting'||m.status==='revealing'); }
+function activeMatchup(){ return matchups.find(m=>m.status==='voting'||m.status==='revealing'||m.status==='flipping'); }
 let nominationsPollInterval = null;
 
 function startNominationsPolling(){
@@ -847,7 +843,7 @@ function bracketLabel(tplId){
 // ══════════════════════════════════════════════════════════════════
 // ▌ TIE-BREAKER OVERLAY
 // ══════════════════════════════════════════════════════════════════
-function startCoinFlip(matchup, g1, g2){
+function startCoinFlip(matchup, g1, g2, forcedWinnerId){
   if(coinFlip?.matchupId===matchup.id) return;
   coinFlip={matchupId:matchup.id, running:true, winnerId:null, loserId:null};
 
@@ -855,8 +851,9 @@ function startCoinFlip(matchup, g1, g2){
     {id:matchup.game1_id, name:g1?.game_name||'Game 1'},
     {id:matchup.game2_id, name:g2?.game_name||'Game 2'},
   ];
+  // Determine which index wins (use forced winner if provided)
+  const forcedIdx=forcedWinnerId?games.findIndex(g=>g.id===forcedWinnerId):-1;
 
-  // Set up overlay
   document.getElementById('flip-name-1').textContent=games[0].name;
   document.getElementById('flip-name-2').textContent=games[1].name;
   document.getElementById('flip-card-1').className='flip-card';
@@ -867,60 +864,50 @@ function startCoinFlip(matchup, g1, g2){
   document.getElementById('flip-winner-announce').textContent='';
   document.getElementById('flip-overlay').classList.add('active');
 
-  // Animation — rapid switching slowing to a stop
   let cur=Math.floor(Math.random()*2);
   let flips=0;
   const totalFlips=22+Math.floor(Math.random()*12);
   let delay=60;
-
-  const phrases=[
-    'Reading the market...','Consulting the Oracle...','Flipping the coin...',
+  const phrases=['Reading the market...','Consulting the Oracle...','Flipping the coin...',
     'Asking the algorithm...','Bribing the judge...','Calculating fate...',
-    'Democracy in action...','Let the gods decide...'
-  ];
+    'Democracy in action...','Let the gods decide...'];
 
   function flip(){
     if(!coinFlip||coinFlip.matchupId!==matchup.id) return;
+    // On last flip, force landing on predetermined winner
+    if(flips===totalFlips-1&&forcedIdx>=0) cur=1-forcedIdx; // so next toggle lands on forcedIdx
     cur=1-cur; flips++;
-
     document.getElementById('flip-card-1').className='flip-card'+(cur===0?' active-pick':'');
     document.getElementById('flip-card-2').className='flip-card'+(cur===1?' active-pick':'');
     document.getElementById('flip-indicator').textContent=phrases[flips%phrases.length];
     document.getElementById('flip-indicator').className='flip-indicator live';
 
     if(flips>=totalFlips){
-      // Landed!
       coinFlip.running=false;
       coinFlip.winnerId=games[cur].id;
       coinFlip.loserId=games[1-cur].id;
-
       document.getElementById('flip-card-1').className='flip-card'+(cur===0?' winner-pick':' loser-pick');
       document.getElementById('flip-card-2').className='flip-card'+(cur===1?' winner-pick':' loser-pick');
       document.getElementById('flip-indicator').textContent='The oracle has spoken.';
       document.getElementById('flip-indicator').className='flip-indicator';
       document.getElementById('flip-winner-announce').textContent=`"${games[cur].name}" advances`;
-
-      if(isAdmin){
-        document.getElementById('flip-confirm').className='flip-confirm show';
-      } else {
-        setTimeout(()=>renderVoteScreen(), 400);
-      }
+      // Only admin gets the confirm button
+      if(isAdmin) document.getElementById('flip-confirm').className='flip-confirm show';
       return;
     }
-
-    if(flips > totalFlips*0.55) delay = Math.min(delay*1.38, 480);
-    setTimeout(flip, delay);
+    if(flips>totalFlips*0.55) delay=Math.min(delay*1.38,480);
+    setTimeout(flip,delay);
   }
-
-  setTimeout(flip, 300);
+  setTimeout(flip,300);
 }
 
 async function confirmFlipResult(){
-  if(!coinFlip||!coinFlip.winnerId) return;
   const overlay=document.getElementById('flip-overlay');
   overlay.classList.remove('active');
-  const a=activeMatchup(); if(!a) return;
-  await completeMatch(a.id, coinFlip.winnerId, coinFlip.loserId);
+  const a=matchups.find(m=>m.status==='flipping'); if(!a) return;
+  // winner_id and loser_id already set in DB — just route and mark complete
+  await completeMatch(a.id, a.winner_id, a.loser_id);
+  coinFlip=null;
   toast('The oracle has decided. Match complete.','ok');
 }
 
@@ -983,10 +970,15 @@ function setupRealtime(){
       await loadActiveVotes();
       updateHeader();
       const a=activeMatchup();
-      document.getElementById('tab-vote').classList.toggle('has-ping',!!a);
-      // When a match goes live, navigate everyone to the bracket to vote inline
+      // Play sound for ALL users when voting starts
+      if(a&&a.status==='voting') playVoteSound();
+      // Trigger coin flip overlay for ALL users when admin sets status to flipping
+      if(a&&a.status==='flipping'&&!coinFlip?.matchupId){
+        const g1=nominations.find(n=>n.id===a.game1_id);
+        const g2=nominations.find(n=>n.id===a.game2_id);
+        startCoinFlip(a,g1,g2,a.winner_id); // winner pre-determined by admin
+      }
       if(a&&a.status==='voting'&&activeScreen!=='screen-admin'&&activeScreen!=='screen-bracket'){
-        playVoteSound();
         nav('screen-bracket');
       } else {
         if(activeScreen==='screen-bracket') renderBracket();
@@ -1245,7 +1237,6 @@ async function adminStartVoting(matchupId){
   coinFlip=null;
   await sb.from('matchups').update({status:'voting'}).eq('id',matchupId);
   await loadActiveVotes();
-  playVoteSound();
   nav('screen-bracket');
   toast('Voting started!','ok');
 }
@@ -1256,10 +1247,10 @@ async function adminReveal(matchupId){
 async function adminComplete(matchupId){
   const m=matchups.find(x=>x.id===matchupId); if(!m) return;
 
-  // If a coin flip already decided the winner, use it
+  // If flip already done and confirmed, complete it
   if(coinFlip?.matchupId===matchupId&&!coinFlip.running&&coinFlip.winnerId){
     await completeMatch(matchupId,coinFlip.winnerId,coinFlip.loserId);
-    toast('The coin has spoken! Match complete.','ok');
+    toast('The oracle has decided. Match complete.','ok');
     return;
   }
 
@@ -1267,11 +1258,13 @@ async function adminComplete(matchupId){
   const g1v=(votes||[]).filter(v=>v.game_id===m.game1_id).length;
   const g2v=(votes||[]).filter(v=>v.game_id===m.game2_id).length;
   if(g1v===g2v){
-    const g1=nominations.find(n=>n.id===m.game1_id);
-    const g2=nominations.find(n=>n.id===m.game2_id);
+    // Pick winner randomly NOW, store in DB with status 'flipping'
+    // All clients will pick up the realtime event and animate to the same winner
+    const winnerId=Math.random()<0.5?m.game1_id:m.game2_id;
+    const loserId=winnerId===m.game1_id?m.game2_id:m.game1_id;
     tieMatchupId=matchupId;
+    await sb.from('matchups').update({status:'flipping',winner_id:winnerId,loser_id:loserId}).eq('id',matchupId);
     toast('🤝 Tie! The oracle decides...','');
-    startCoinFlip(m,g1,g2);
     return;
   }
   tieMatchupId=null;
@@ -1323,7 +1316,7 @@ function nav(id){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
   activeScreen=id;
-  const tabMap={'screen-nominate':'tab-nominate','screen-bracket':'tab-bracket','screen-vote':'tab-vote','screen-admin':'tab-admin'};
+  const tabMap={'screen-nominate':'tab-nominate','screen-bracket':'tab-bracket','screen-admin':'tab-admin'};
   document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
   const activeTab=document.getElementById(tabMap[id]);
   if(activeTab) activeTab.classList.add('active');
@@ -1351,7 +1344,7 @@ function updateHeader(){
   ph.textContent=labels[session.phase]||session.phase;
   ph.className='ph-'+session.phase;
   const a=activeMatchup();
-  document.getElementById('tab-vote').classList.toggle('has-ping',!!a);
+
   // Badge on admin tab if pending join requests
   const pending=joinRequests.filter(r=>r.status==='pending').length;
   const adminBtn=document.querySelector('.btn-admin-toggle');
@@ -1687,8 +1680,8 @@ function renderBracket(){
 function cardHtml(m,tpl){
   const g1=m.game1_id?nominations.find(n=>n.id===m.game1_id):null;
   const g2=m.game2_id?nominations.find(n=>n.id===m.game2_id):null;
-  const pills={pending:'st-pill-pending',voting:'st-pill-voting',revealing:'st-pill-revealing',complete:'st-pill-complete',bye:'st-pill-bye'};
-  const pillLabels={pending:'Pending',voting:'🔴 Voting',revealing:'👁 Revealed',complete:'✓ Done',bye:'Bye'};
+  const pills={pending:'st-pill-pending',voting:'st-pill-voting',revealing:'st-pill-revealing',flipping:'st-pill-voting',complete:'st-pill-complete',bye:'st-pill-bye'};
+  const pillLabels={pending:'Pending',voting:'🔴 Voting',revealing:'👁 Revealed',flipping:'🪙 Oracle',complete:'✓ Done',bye:'Bye'};
   const isTie=tieMatchupId===m.id;
 
   // Determine game win/loss state for completed matches
