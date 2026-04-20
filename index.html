@@ -1498,15 +1498,28 @@ async function onNomInput(val){
 async function steamSearch(q){
   const dd=document.getElementById('steam-dropdown'); if(!dd) return;
   try {
-    const url=`https://api.allorigins.win/raw?url=${encodeURIComponent('https://store.steampowered.com/api/storesearch/?term='+encodeURIComponent(q)+'&l=english&cc=US')}`;
-    const res=await fetch(url);
-    if(!res.ok) throw new Error('bad response');
+    const res=await fetch(`https://steamspy.com/api.php?request=search&term=${encodeURIComponent(q)}`);
+    if(!res.ok) throw new Error('bad');
     const json=await res.json();
-    const items=(json.items||[]).slice(0,7);
+    const items=Object.values(json).slice(0,7);
     if(!items.length){
       dd.innerHTML=`<div class="steam-manual" onclick="useManualNom()">⌨ Add "<strong>${esc(q)}</strong>" manually (not on Steam)</div>`;
       return;
     }
+    steamDropdownIdx=-1;
+    dd.innerHTML=items.map((item,i)=>{
+      const appid=item.appid;
+      const price=item.price>0?`$${(item.price/100).toFixed(2)}`:item.price===0?'Free':'';
+      const thumb=`https://cdn.akamai.steamstatic.com/steam/apps/${appid}/capsule_sm_120.jpg`;
+      return `<div class="steam-item" data-idx="${i}" onclick="selectSteamGame(${appid},'${esc(item.name).replace(/'/g,"\'")}')">` +
+        `<img class="steam-thumb" src="${thumb}" onerror="this.style.display='none'">` +
+        `<span class="steam-item-name">${esc(item.name)}</span>` +
+        `${price?`<span class="steam-item-price">${price}</span>`:''}</div>`;
+    }).join('')+`<div class="steam-manual" onclick="useManualNom()">⌨ Add manually (not on Steam)</div>`;
+  } catch(e){
+    dd.innerHTML=`<div class="steam-manual" onclick="useManualNom()">⌨ Steam search unavailable — add manually</div>`;
+  }
+}
     steamDropdownIdx=-1;
     dd.innerHTML=items.map((item,i)=>{
       const price=item.price?.final ? `$${(item.price.final/100).toFixed(2)}` : item.price?.final===0?'Free':'';
@@ -1954,52 +1967,51 @@ async function showSteamInfo(e, appId){
   inner.innerHTML='<div class="steam-loading">Fetching from Steam...</div>';
   modal.classList.add('active');
   try {
-    const url=`https://api.allorigins.win/raw?url=${encodeURIComponent('https://store.steampowered.com/api/appdetails?appids='+appId+'&cc=US')}`;
-    const res=await fetch(url);
+    // SteamSpy for details — proper CORS support
+    const res=await fetch(`https://steamspy.com/api.php?request=appdetails&appid=${appId}`);
     if(!res.ok) throw new Error('bad response');
-    const json=await res.json();
-    const data=json[appId]?.data;
-    if(!data){ inner.innerHTML='<div class="steam-loading">Game data unavailable.</div><div style="text-align:right;padding:8px 16px;"><button class="steam-modal-close" onclick="closeSteamModal()">Close</button></div>'; return; }
+    const d=await res.json();
+    if(!d||!d.name){ inner.innerHTML='<div class="steam-loading">Game data unavailable.</div><div style="text-align:right;padding:8px 16px;"><button class="steam-modal-close" onclick="closeSteamModal()">Close</button></div>'; return; }
 
-    const price=data.is_free?'Free':data.price_overview?.final_formatted||'N/A';
-    const score=data.metacritic?.score;
-    const reviews=data.recommendations?.total;
-    const release=data.release_date?.date||'Unknown';
-    const genres=(data.genres||[]).map(g=>g.description).slice(0,4);
-    const devs=(data.developers||[]).join(', ');
+    const price=d.price===0?'Free':d.price>0?`$${(d.price/100).toFixed(2)}`:'N/A';
+    const discount=d.discount>0?`-${d.discount}%`:'';
+    const genres=(d.genre||'').split(',').map(g=>g.trim()).filter(Boolean).slice(0,4);
+    const devs=d.developer||'';
+    const totalReviews=(d.positive||0)+(d.negative||0);
+    const posPercent=totalReviews>0?Math.round(d.positive/totalReviews*100):null;
 
-    // Multiplayer from categories
-    const cats=(data.categories||[]).map(c=>c.description);
-    const mpTags=['Multi-player','Online Co-op','Local Co-op','Co-op','Online PvP','Local PvP','Shared/Split Screen','MMO'];
-    const mp=cats.filter(c=>mpTags.some(t=>c.includes(t)));
-
-    // Review sentiment
+    // Review sentiment from score
     let reviewTag='', reviewCls='';
-    if(data.review_score_desc && data.review_score_desc!=='No user reviews'){
-      reviewTag=data.review_score_desc; 
-      const score=data.review_score||0;
-      reviewCls=score>=7?'green':score>=4?'gold':'red';
+    if(posPercent!==null){
+      if(posPercent>=95) { reviewTag=`Overwhelmingly Positive (${posPercent}%)`; reviewCls='green'; }
+      else if(posPercent>=80) { reviewTag=`Very Positive (${posPercent}%)`; reviewCls='green'; }
+      else if(posPercent>=70) { reviewTag=`Mostly Positive (${posPercent}%)`; reviewCls='green'; }
+      else if(posPercent>=40) { reviewTag=`Mixed (${posPercent}%)`; reviewCls='gold'; }
+      else { reviewTag=`Negative (${posPercent}%)`; reviewCls='red'; }
     }
+
+    // Multiplayer tags from SteamSpy tags object
+    const allTags=Object.keys(d.tags||{});
+    const mpKeywords=['Multiplayer','Co-op','Online Co-op','Local Co-op','Co-op Campaign','4 Player Local','Online PvP','PvP','MMO','Battle Royale'];
+    const mp=allTags.filter(t=>mpKeywords.some(k=>t.toLowerCase().includes(k.toLowerCase()))).slice(0,4);
 
     const hero=`https://cdn.akamai.steamstatic.com/steam/apps/${appId}/header.jpg`;
     inner.innerHTML=`
       <img class="steam-modal-hero" src="${hero}" onerror="this.style.display='none'">
       <div class="steam-modal-body">
-        <div class="steam-modal-title">${esc(data.name)}</div>
+        <div class="steam-modal-title">${esc(d.name)}</div>
         <div class="steam-modal-row">
-          <span class="steam-tag gold">${price}</span>
+          <span class="steam-tag gold">${price}${discount?` <s style='opacity:.5;font-size:9px'>${discount}</s>`:''}</span>
           ${reviewTag?`<span class="steam-tag ${reviewCls}">${esc(reviewTag)}</span>`:''}
-          ${score?`<span class="steam-tag">Metacritic ${score}</span>`:''}
         </div>
         <div class="steam-modal-row">
           ${genres.map(g=>`<span class="steam-tag">${esc(g)}</span>`).join('')}
         </div>
         ${mp.length?`<div class="steam-modal-row">
           ${mp.map(t=>`<span class="steam-tag green">${esc(t)}</span>`).join('')}
-        </div>`:''}
-        <div class="steam-modal-stat">Released: <span>${esc(release)}</span></div>
+        </div>`:'<div class="steam-modal-stat" style="color:var(--text-muted);font-style:italic;">No multiplayer tags found</div>'}
         ${devs?`<div class="steam-modal-stat">Developer: <span>${esc(devs)}</span></div>`:''}
-        ${reviews?`<div class="steam-modal-stat">Reviews: <span>${reviews.toLocaleString()}</span></div>`:''}
+        ${totalReviews?`<div class="steam-modal-stat">Reviews: <span>${d.positive.toLocaleString()} positive / ${totalReviews.toLocaleString()} total</span></div>`:''}
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;">
           <a href="https://store.steampowered.com/app/${appId}" target="_blank" style="font-size:11px;color:var(--gold);letter-spacing:0.5px;">View on Steam →</a>
           <button class="steam-modal-close" onclick="closeSteamModal()">Close</button>
