@@ -535,12 +535,13 @@
 
 <!-- ── Nav Tabs ────────────────────────────────────────────────── -->
 <div id="nav-tabs">
-  <button class="nav-tab" onclick="nav('screen-nominate')">NOMINATIONS</button>
-  <button class="nav-tab" onclick="nav('screen-bracket')">BRACKET</button>
+  <button class="nav-tab" id="tab-nominate" onclick="nav('screen-nominate')">NOMINATIONS</button>
+  <button class="nav-tab" id="tab-bracket" onclick="nav('screen-bracket')">BRACKET</button>
   <button class="nav-tab" id="tab-vote" onclick="nav('screen-vote')">
     VOTE
     <span class="vote-ping"></span>
   </button>
+  <button class="nav-tab" id="tab-admin" onclick="nav('screen-admin')" style="display:none;">ADMIN</button>
 </div>
 
 <!-- ── Lobby ───────────────────────────────────────────────────── -->
@@ -1108,6 +1109,7 @@ function adminLogin(){
     isAdmin=true;
     document.getElementById('admin-gate').style.display='none';
     document.getElementById('admin-panel').style.display='block';
+    updateHeader();
     renderAdminContent(); toast('Admin access granted','ok');
   } else { toast('Wrong password','err'); }
 }
@@ -1191,9 +1193,10 @@ function nav(id){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
   activeScreen=id;
-  document.querySelectorAll('.nav-tab').forEach((t,i)=>{
-    t.classList.toggle('active',['screen-nominate','screen-bracket','screen-vote'][i]===id);
-  });
+  const tabMap={'screen-nominate':'tab-nominate','screen-bracket':'tab-bracket','screen-vote':'tab-vote','screen-admin':'tab-admin'};
+  document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
+  const activeTab=document.getElementById(tabMap[id]);
+  if(activeTab) activeTab.classList.add('active');
   if(id==='screen-nominate'){ renderNomScreen(); startNominationsPolling(); }
   else { stopNominationsPolling(); }
   if(id==='screen-bracket')  renderBracket();
@@ -1207,6 +1210,11 @@ function toggleAdmin(){ nav(activeScreen==='screen-admin'?(session?'screen-nomin
 // ══════════════════════════════════════════════════════════════════
 function updateHeader(){
   document.getElementById('header-nick').textContent=nickname?`👤 ${nickname}`:'';
+  // Show nav tabs whenever we have a nickname (even on admin screen)
+  if(nickname) document.getElementById('nav-tabs').classList.add('show');
+  // Show admin tab in nav if logged in as admin
+  const adminTab=document.getElementById('tab-admin');
+  if(adminTab) adminTab.style.display=isAdmin?'':'none';
   const ph=document.getElementById('header-phase');
   if(!session){ ph.textContent=''; ph.className=''; return; }
   const labels={nominating:'Nominations Open',bracket:'Tournament Active',complete:'🏆 Complete'};
@@ -1214,10 +1222,12 @@ function updateHeader(){
   ph.className='ph-'+session.phase;
   const a=activeMatchup();
   document.getElementById('tab-vote').classList.toggle('has-ping',!!a);
-  // Badge on admin button if there are pending join requests
+  // Badge on admin tab if pending join requests
   const pending=joinRequests.filter(r=>r.status==='pending').length;
   const adminBtn=document.querySelector('.btn-admin-toggle');
-  if(adminBtn) adminBtn.textContent=pending?`ADMIN 🔴`:' ADMIN';
+  if(adminBtn) adminBtn.textContent=pending?`ADMIN 🔴`:'ADMIN';
+  if(adminTab&&pending) adminTab.textContent=`ADMIN 🔴`;
+  else if(adminTab&&isAdmin) adminTab.textContent='ADMIN';
 }
 
 // ══════════════════════════════════════════════════════════════════
