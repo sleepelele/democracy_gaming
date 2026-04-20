@@ -700,7 +700,7 @@ const SUPABASE_URL = 'https://dyttrevzhxjmtdiynfpu.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR5dHRyZXZ6aHhqbXRkaXluZnB1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0NzQzNTgsImV4cCI6MjA5MTA1MDM1OH0.jfEEylD0LnXmitqy7lWDmL0TlGADaCvIW-yDhmuZHTg';
 const ADMIN_PASSWORD = 'suns123';
 // ← Paste your free RAWG API key here: rawg.io/apidocs
-const RAWG_KEY = 'd3fe2a5bf52143c6b07d038257b45b11';
+const RAWG_KEY = 'YOUR_RAWG_KEY';
 // ← Paste your GitHub image URL here (e.g. 'https://raw.githubusercontent.com/sleepelele/democracy_gaming/main/bg.jpg')
 const LOBBY_BG_URL = '';
 
@@ -1206,7 +1206,7 @@ async function adminLockAndGenerate(){
 function playVoteSound(){
   try {
     const audio=new Audio('vote.mp3');
-    audio.volume=0.7;
+    audio.volume=0.35;
     audio.play().catch(()=>{}); // silently ignore if file not found yet
   } catch(e){}
 }
@@ -1707,11 +1707,17 @@ function cardHtml(m,tpl){
       </div>
     </div>`;
   } else {
-    // Not voting — show plain game names
+    // Not voting — show game names with steam info button
     voteHtml=`
-      <div class="b-game ${g1?g1cls:'tbd'}">${g1?esc(g1.game_name):'TBD'}</div>
+      <div class="b-game ${g1?g1cls:'tbd'}" style="display:flex;align-items:center;justify-content:center;gap:5px;">
+        <span>${g1?esc(g1.game_name):'TBD'}</span>
+        ${g1?.steam_app_id?`<span class='steam-btn' onclick='showSteamInfo(event,"${g1.steam_app_id}")'>ℹ</span>`:''}
+      </div>
       <div class="b-vs">VS</div>
-      <div class="b-game ${g2?g2cls:'tbd'}">${g2?esc(g2.game_name):'TBD'}</div>`;
+      <div class="b-game ${g2?g2cls:'tbd'}" style="display:flex;align-items:center;justify-content:center;gap:5px;">
+        <span>${g2?esc(g2.game_name):'TBD'}</span>
+        ${g2?.steam_app_id?`<span class='steam-btn' onclick='showSteamInfo(event,"${g2.steam_app_id}")'>ℹ</span>`:''}
+      </div>`;
   }
 
   // Admin controls
@@ -1961,10 +1967,50 @@ async function showSteamInfo(e, appId){
   inner.innerHTML='<div class="steam-loading">Fetching game info...</div>';
   modal.classList.add('active');
   try {
-    const res=await fetch(`https://api.rawg.io/api/games/${appId}?key=${RAWG_KEY}`);
-    if(!res.ok) throw new Error('bad response');
-    const d=await res.json();
+    // Fetch RAWG data + trailer + Steam LV price in parallel
+    const [rawgRes, trailerRes] = await Promise.all([
+      fetch(`https://api.rawg.io/api/games/${appId}?key=${RAWG_KEY}`),
+      fetch(`https://api.rawg.io/api/games/${appId}/movies?key=${RAWG_KEY}`).catch(()=>null)
+    ]);
+    if(!rawgRes.ok) throw new Error('bad response');
+    const d=await rawgRes.json();
     if(!d||!d.name){ inner.innerHTML='<div class="steam-loading">Game data unavailable.</div><div style="text-align:right;padding:8px 16px;"><button class="steam-modal-close" onclick="closeSteamModal()">Close</button></div>'; return; }
+
+    // Trailer — first result from RAWG movies
+    let trailerHtml='';
+    if(trailerRes?.ok){
+      const td=await trailerRes.json();
+      const clip=(td.results||[])[0];
+      if(clip?.data?.max){
+        trailerHtml=`<video controls muted playsinline
+          style="width:100%;max-height:200px;background:#000;display:block;"
+          poster="${clip.preview||''}">
+          <source src="${clip.data.max}" type="video/mp4">
+          <source src="${clip.data['480']||clip.data.max}" type="video/mp4">
+        </video>`;
+      }
+    }
+
+    // Steam app ID from RAWG stores list → fetch LV price
+    const steamStore=(d.stores||[]).find(s=>s.store?.slug==='steam');
+    const steamUrl=steamStore?.url||'';
+    const steamAppId=steamUrl.match(/\/app\/(\d+)/)?.[1]||null;
+    const steamLink=steamAppId?`https://store.steampowered.com/app/${steamAppId}/`:
+      `https://store.steampowered.com/search/?term=${encodeURIComponent(d.name)}`;
+
+    let lvPrice='N/A';
+    if(steamAppId){
+      try {
+        const priceRes=await fetch(`https://store.steampowered.com/api/appdetails?appids=${steamAppId}&cc=lv&filters=price_overview`);
+        if(priceRes.ok){
+          const pj=await priceRes.json();
+          const po=pj[steamAppId]?.data?.price_overview;
+          if(po) lvPrice=po.final_formatted;
+          else if(pj[steamAppId]?.data===null) lvPrice='Not available';
+          else lvPrice='Free';
+        }
+      } catch(pe){ lvPrice='—'; }
+    }
 
     const metacritic=d.metacritic;
     const rating=d.rating?`★ ${d.rating.toFixed(1)} / 5`:'';
@@ -1972,35 +2018,30 @@ async function showSteamInfo(e, appId){
     const genres=(d.genres||[]).map(g=>g.name).slice(0,4);
     const devs=(d.developers||[]).map(x=>x.name).join(', ');
     const esrb=d.esrb_rating?.name||'';
+    const rc=d.ratings_count||0;
 
     // Multiplayer from tags
     const allTags=(d.tags||[]).map(t=>t.name);
     const mpKeywords=['multiplayer','co-op','online','local','pvp','mmo','battle royale','co-operative','split screen'];
     const mp=allTags.filter(t=>mpKeywords.some(k=>t.toLowerCase().includes(k))).slice(0,5);
 
-    // Review sentiment from RAWG rating_top
+    // Review sentiment
     let reviewTag='', reviewCls='';
-    const rt=d.rating_top||0;
-    const rc=d.ratings_count||0;
     if(rc>0){
-      const pct=Math.round((d.ratings||[]).find(r=>r.title==='exceptional'||r.title==='recommended')?.percent||0);
-      if(d.rating>=4.2){ reviewTag=`Overwhelmingly Positive`; reviewCls='green'; }
-      else if(d.rating>=3.8){ reviewTag=`Very Positive`; reviewCls='green'; }
-      else if(d.rating>=3.2){ reviewTag=`Mostly Positive`; reviewCls='green'; }
-      else if(d.rating>=2.5){ reviewTag=`Mixed`; reviewCls='gold'; }
-      else if(d.rating>0){ reviewTag=`Mostly Negative`; reviewCls='red'; }
+      if(d.rating>=4.2){ reviewTag='Overwhelmingly Positive'; reviewCls='green'; }
+      else if(d.rating>=3.8){ reviewTag='Very Positive'; reviewCls='green'; }
+      else if(d.rating>=3.2){ reviewTag='Mostly Positive'; reviewCls='green'; }
+      else if(d.rating>=2.5){ reviewTag='Mixed'; reviewCls='gold'; }
+      else if(d.rating>0){ reviewTag='Mostly Negative'; reviewCls='red'; }
     }
-
-    // Find Steam store link from stores
-    const steamStore=(d.stores||[]).find(s=>s.store?.slug==='steam');
-    const steamLink=steamStore?.url||`https://store.steampowered.com/search/?term=${encodeURIComponent(d.name)}`;
 
     const hero=d.background_image||'';
     inner.innerHTML=`
-      ${hero?`<img class="steam-modal-hero" src="${hero}" onerror="this.style.display='none'">`:''}
+      ${trailerHtml||(!trailerHtml&&hero?`<img class="steam-modal-hero" src="${hero}" onerror="this.style.display='none'">`:'') }
       <div class="steam-modal-body">
         <div class="steam-modal-title">${esc(d.name)}</div>
         <div class="steam-modal-row">
+          <span class="steam-tag gold">🇱🇻 ${lvPrice}</span>
           ${rating?`<span class="steam-tag gold">${rating}</span>`:''}
           ${metacritic?`<span class="steam-tag ${metacritic>=75?'green':metacritic>=50?'gold':'red'}">Metacritic ${metacritic}</span>`:''}
           ${reviewTag?`<span class="steam-tag ${reviewCls}">${reviewTag}</span>`:''}
@@ -2013,7 +2054,6 @@ async function showSteamInfo(e, appId){
           :'<div class="steam-modal-stat" style="color:var(--text-muted);font-style:italic;font-size:11px;">No multiplayer info found</div>'}
         <div class="steam-modal-stat">Released: <span>${esc(released)}</span></div>
         ${devs?`<div class="steam-modal-stat">Developer: <span>${esc(devs)}</span></div>`:''}
-        ${rc?`<div class="steam-modal-stat">RAWG ratings: <span>${rc.toLocaleString()}</span></div>`:''}
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;">
           <a href="${steamLink}" target="_blank" style="font-size:11px;color:var(--gold);letter-spacing:0.5px;">View on Steam →</a>
           <button class="steam-modal-close" onclick="closeSteamModal()">Close</button>
