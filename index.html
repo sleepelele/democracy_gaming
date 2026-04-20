@@ -811,7 +811,7 @@ function startNominationsPolling(){
   nominationsPollInterval = setInterval(async()=>{
     if(activeScreen==='screen-nominate'&&session){
       await loadNominations();
-      renderNomScreen();
+      renderNomList(); // only update the list, never destroy the input
     }
   }, 4000);
 }
@@ -951,7 +951,7 @@ function setupRealtime(){
   sb.channel('gamenight')
     .on('postgres_changes',{event:'*',schema:'public',table:'nominations'},async()=>{
       await loadNominations();
-      if(activeScreen==='screen-nominate') renderNomScreen();
+      if(activeScreen==='screen-nominate') renderNomList();
     })
     .on('postgres_changes',{event:'*',schema:'public',table:'game_sessions'},async()=>{
       await loadSession();
@@ -1421,10 +1421,10 @@ async function denyLateJoin(requestId){
 // ══════════════════════════════════════════════════════════════════
 // ▌ RENDERING — NOMINATIONS
 // ══════════════════════════════════════════════════════════════════
-function renderNomScreen(){
+function renderNomList(){
+  // Only updates the game list and badge — never touches the input/form
   const mine=nominations.filter(n=>n.submitted_by===nickname);
   const max=session?.max_noms_per_person||2;
-  const canNom=session?.phase==='nominating'&&mine.length<max;
   document.getElementById('nom-count-badge').textContent=`${nominations.length} nominated`;
 
   const st=document.getElementById('nom-my-status');
@@ -1432,11 +1432,12 @@ function renderNomScreen(){
     st.innerHTML=`<div class="nom-status-msg" style="color:var(--amber);">🔒 Nominations are closed</div>`;
   } else if(mine.length>=max){
     st.innerHTML=`<div class="nom-status-msg" style="color:var(--green);">✓ You've submitted ${mine.length}/${max} nomination${max>1?'s':''}</div>`;
+    // Hide form now that limit is reached
+    document.getElementById('nom-form-area').innerHTML=`<hr class="divider">`;
   } else {
     st.innerHTML=`<div class="nom-status-msg" style="color:var(--text-dim);">Submit up to <strong>${max}</strong> game${max>1?'s':''} &mdash; ${mine.length}/${max} done</div>`;
   }
 
-  // Show full list FIRST so people see what's already in before typing
   const list=document.getElementById('nom-list');
   if(!nominations.length){
     list.innerHTML=`<div style="text-align:center;color:var(--text-muted);padding:16px 0;">No games nominated yet — be the first!</div>`;
@@ -1449,21 +1450,36 @@ function renderNomScreen(){
       </div>`;
     }).join('');
   }
+}
 
-  // Form below the list
-  document.getElementById('nom-form-area').innerHTML=canNom?`
-    <hr class="divider">
-    <div class="nom-form">
-      <div class="nom-search-wrap">
-        <input type="text" id="nom-input" placeholder="Search Steam or type manually..." maxlength="80"
-          oninput="onNomInput(this.value)"
-          onkeydown="onNomKeydown(event)"
-          autocomplete="off">
-        <div class="steam-dropdown" id="steam-dropdown" style="display:none;"></div>
+function renderNomScreen(){
+  const mine=nominations.filter(n=>n.submitted_by===nickname);
+  const max=session?.max_noms_per_person||2;
+  const canNom=session?.phase==='nominating'&&mine.length<max;
+
+  renderNomList();
+
+  // Only build the form if not already rendered (avoid destroying live input)
+  const formArea=document.getElementById('nom-form-area');
+  if(canNom && !document.getElementById('nom-input')){
+    formArea.innerHTML=`
+      <hr class="divider">
+      <div class="nom-form">
+        <div class="nom-search-wrap">
+          <input type="text" id="nom-input" placeholder="Search Steam or type manually..." maxlength="80"
+            oninput="onNomInput(this.value)"
+            onkeydown="onNomKeydown(event)"
+            autocomplete="off">
+          <div class="steam-dropdown" id="steam-dropdown" style="display:none;"></div>
+        </div>
+        <button class="btn btn-cyan" onclick="submitNom()">NOMINATE</button>
       </div>
-      <button class="btn btn-cyan" onclick="submitNom()">NOMINATE</button>
-    </div>
-  `:session?.phase==='nominating'?`<hr class="divider">`:'';
+    `;
+  } else if(!canNom && session?.phase==='nominating'){
+    formArea.innerHTML=`<hr class="divider">`;
+  } else if(!canNom){
+    formArea.innerHTML='';
+  }
 }
 // ── Steam state ──
 let steamSelected=null; // {appId, name, data} — set when user picks from dropdown
@@ -1482,9 +1498,9 @@ async function onNomInput(val){
 async function steamSearch(q){
   const dd=document.getElementById('steam-dropdown'); if(!dd) return;
   try {
-    const proxy='https://corsproxy.io/?';
-    const url=`https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(q)}&l=english&cc=US`;
-    const res=await fetch(proxy+encodeURIComponent(url));
+    const url=`https://corsproxy.io/?https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(q)}&l=english&cc=US`;
+    const res=await fetch(url);
+    if(!res.ok) throw new Error('bad response');
     const json=await res.json();
     const items=(json.items||[]).slice(0,7);
     if(!items.length){
@@ -1546,7 +1562,7 @@ async function submitNom(){
   steamSelected=null; el.value='';
   const dd=document.getElementById('steam-dropdown'); if(dd) dd.style.display='none';
   toast(`"${name}" nominated!`,'ok');
-  await loadNominations(); renderNomScreen();
+  await loadNominations(); renderNomList();
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1938,9 +1954,9 @@ async function showSteamInfo(e, appId){
   inner.innerHTML='<div class="steam-loading">Fetching from Steam...</div>';
   modal.classList.add('active');
   try {
-    const proxy='https://corsproxy.io/?';
-    const url=`https://store.steampowered.com/api/appdetails?appids=${appId}&cc=US`;
-    const res=await fetch(proxy+encodeURIComponent(url));
+    const url=`https://corsproxy.io/?https://store.steampowered.com/api/appdetails?appids=${appId}&cc=US`;
+    const res=await fetch(url);
+    if(!res.ok) throw new Error('bad response');
     const json=await res.json();
     const data=json[appId]?.data;
     if(!data){ inner.innerHTML='<div class="steam-loading">Game data unavailable.</div><div style="text-align:right;padding:8px 16px;"><button class="steam-modal-close" onclick="closeSteamModal()">Close</button></div>'; return; }
