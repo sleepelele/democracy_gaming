@@ -1520,20 +1520,6 @@ async function steamSearch(q){
     dd.innerHTML=`<div class="steam-manual" onclick="useManualNom()">⌨ Steam search unavailable — add manually</div>`;
   }
 }
-    steamDropdownIdx=-1;
-    dd.innerHTML=items.map((item,i)=>{
-      const price=item.price?.final ? `$${(item.price.final/100).toFixed(2)}` : item.price?.final===0?'Free':'';
-      const thumb=`https://cdn.akamai.steamstatic.com/steam/apps/${item.id}/capsule_sm_120.jpg`;
-      return `<div class="steam-item" data-idx="${i}" onclick="selectSteamGame(${item.id},'${esc(item.name).replace(/'/g,"\'")}')">
-        <img class="steam-thumb" src="${thumb}" onerror="this.style.display='none'">
-        <span class="steam-item-name">${esc(item.name)}</span>
-        ${price?`<span class="steam-item-price">${price}</span>`:''}
-      </div>`;
-    }).join('')+`<div class="steam-manual" onclick="useManualNom()">⌨ Add manually (not on Steam)</div>`;
-  } catch(e){
-    dd.innerHTML=`<div class="steam-manual" onclick="useManualNom()">⌨ Steam search unavailable — add manually</div>`;
-  }
-}
 function onNomKeydown(e){
   const dd=document.getElementById('steam-dropdown');
   const items=dd?.querySelectorAll('.steam-item');
