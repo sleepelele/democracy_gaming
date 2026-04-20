@@ -514,6 +514,72 @@
     .form-group { margin-bottom: 16px; }
     .mt12 { margin-top: 12px; }
     .mt16 { margin-top: 16px; }
+
+    /* ── Steam autocomplete ── */
+    .nom-search-wrap { position: relative; flex: 1; }
+    .nom-search-wrap input { width: 100%; }
+    .steam-dropdown {
+      position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 100;
+      background: var(--surface2); border: 1px solid var(--border2); border-radius: var(--r);
+      overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      max-height: 280px; overflow-y: auto;
+    }
+    .steam-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px; cursor: pointer; transition: background 0.1s;
+      border-bottom: 1px solid var(--border);
+    }
+    .steam-item:last-child { border-bottom: none; }
+    .steam-item:hover, .steam-item.active { background: var(--gold-dim); }
+    .steam-thumb { width: 42px; height: 30px; object-fit: cover; border-radius: 2px; flex-shrink: 0; background: var(--surface3); }
+    .steam-item-name { font-size: 13px; font-weight: 500; color: var(--text); flex: 1; }
+    .steam-item-price { font-size: 11px; color: var(--gold); flex-shrink: 0; }
+    .steam-searching { padding: 10px 14px; font-size: 12px; color: var(--text-muted); font-style: italic; }
+    .steam-manual { padding: 9px 12px; font-size: 12px; color: var(--text-dim); cursor: pointer; display: flex; align-items: center; gap: 8px; }
+    .steam-manual:hover { background: var(--surface3); }
+
+    /* ── Steam info button on bracket card ── */
+    .steam-btn {
+      display: inline-flex; align-items: center; gap: 3px;
+      font-size: 9px; font-weight: 600; letter-spacing: 0.5px;
+      color: var(--gold); border: 1px solid var(--border2);
+      background: var(--surface3); border-radius: 2px;
+      padding: 1px 6px; cursor: pointer; transition: all 0.15s;
+      vertical-align: middle; margin-left: 4px; flex-shrink: 0;
+    }
+    .steam-btn:hover { border-color: var(--gold); background: var(--gold-dim); }
+
+    /* ── Steam info modal ── */
+    #steam-modal {
+      display: none; position: fixed; inset: 0; z-index: 600;
+      background: rgba(0,0,0,0.75); align-items: center; justify-content: center; padding: 20px;
+    }
+    #steam-modal.active { display: flex; }
+    .steam-modal-inner {
+      background: var(--surface); border: 1px solid var(--border2);
+      border-radius: var(--r); max-width: 480px; width: 100%;
+      overflow: hidden; box-shadow: 0 24px 60px rgba(0,0,0,0.6);
+    }
+    .steam-modal-hero {
+      width: 100%; height: 180px; object-fit: cover;
+      display: block; background: var(--surface2);
+    }
+    .steam-modal-body { padding: 18px 20px; }
+    .steam-modal-title { font-family: var(--font-h); font-size: 22px; font-style: italic; color: var(--cream); margin-bottom: 12px; }
+    .steam-modal-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+    .steam-tag {
+      font-size: 10px; font-weight: 500; letter-spacing: 0.5px;
+      padding: 3px 9px; border-radius: 2px;
+      background: var(--surface2); border: 1px solid var(--border2); color: var(--text-dim);
+    }
+    .steam-tag.gold { border-color: var(--gold); color: var(--gold); background: var(--gold-dim); }
+    .steam-tag.green { border-color: var(--green); color: var(--green); background: var(--green-dim); }
+    .steam-tag.red { border-color: var(--red); color: var(--red); background: var(--red-dim); }
+    .steam-modal-stat { font-size: 12px; color: var(--text-dim); margin-bottom: 5px; }
+    .steam-modal-stat span { color: var(--cream); font-weight: 500; }
+    .steam-modal-close { float: right; background: none; border: 1px solid var(--border2); color: var(--text-dim); padding: 4px 10px; font-size: 11px; cursor: pointer; border-radius: 2px; margin-top: 14px; }
+    .steam-modal-close:hover { border-color: var(--gold); color: var(--gold); }
+    .steam-loading { padding: 40px; text-align: center; color: var(--text-muted); font-style: italic; font-size: 13px; }
     @media(max-width:520px){
       .vote-arena { flex-direction: column; }
       .vote-vs { padding: 8px 0; }
@@ -598,6 +664,13 @@
   </div>
   <div id="admin-panel" style="display:none;">
     <div id="admin-content"></div>
+  </div>
+</div>
+
+<!-- ── Steam Info Modal ──────────────────────────────────────────── -->
+<div id="steam-modal" onclick="if(event.target===this)closeSteamModal()">
+  <div class="steam-modal-inner" id="steam-modal-inner">
+    <div class="steam-loading">Loading Steam data...</div>
   </div>
 </div>
 
@@ -1381,15 +1454,83 @@ function renderNomScreen(){
   document.getElementById('nom-form-area').innerHTML=canNom?`
     <hr class="divider">
     <div class="nom-form">
-      <input type="text" id="nom-input" placeholder="Nominate a game..." maxlength="60"
-        onkeydown="if(event.key==='Enter')submitNom()">
+      <div class="nom-search-wrap">
+        <input type="text" id="nom-input" placeholder="Search Steam or type manually..." maxlength="80"
+          oninput="onNomInput(this.value)"
+          onkeydown="onNomKeydown(event)"
+          autocomplete="off">
+        <div class="steam-dropdown" id="steam-dropdown" style="display:none;"></div>
+      </div>
       <button class="btn btn-cyan" onclick="submitNom()">NOMINATE</button>
     </div>
   `:session?.phase==='nominating'?`<hr class="divider">`:'';
 }
+// ── Steam state ──
+let steamSelected=null; // {appId, name, data} — set when user picks from dropdown
+let steamSearchTimer=null;
+let steamDropdownIdx=-1;
+
+async function onNomInput(val){
+  steamSelected=null; // clear selection when typing
+  clearTimeout(steamSearchTimer);
+  const dd=document.getElementById('steam-dropdown'); if(!dd) return;
+  if(val.trim().length<2){ dd.style.display='none'; return; }
+  dd.innerHTML='<div class="steam-searching">Searching Steam...</div>';
+  dd.style.display='block';
+  steamSearchTimer=setTimeout(()=>steamSearch(val.trim()),400);
+}
+async function steamSearch(q){
+  const dd=document.getElementById('steam-dropdown'); if(!dd) return;
+  try {
+    const proxy='https://corsproxy.io/?';
+    const url=`https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(q)}&l=english&cc=US`;
+    const res=await fetch(proxy+encodeURIComponent(url));
+    const json=await res.json();
+    const items=(json.items||[]).slice(0,7);
+    if(!items.length){
+      dd.innerHTML=`<div class="steam-manual" onclick="useManualNom()">⌨ Add "<strong>${esc(q)}</strong>" manually (not on Steam)</div>`;
+      return;
+    }
+    steamDropdownIdx=-1;
+    dd.innerHTML=items.map((item,i)=>{
+      const price=item.price?.final ? `$${(item.price.final/100).toFixed(2)}` : item.price?.final===0?'Free':'';
+      const thumb=`https://cdn.akamai.steamstatic.com/steam/apps/${item.id}/capsule_sm_120.jpg`;
+      return `<div class="steam-item" data-idx="${i}" onclick="selectSteamGame(${item.id},'${esc(item.name).replace(/'/g,"\'")}')">
+        <img class="steam-thumb" src="${thumb}" onerror="this.style.display='none'">
+        <span class="steam-item-name">${esc(item.name)}</span>
+        ${price?`<span class="steam-item-price">${price}</span>`:''}
+      </div>`;
+    }).join('')+`<div class="steam-manual" onclick="useManualNom()">⌨ Add manually (not on Steam)</div>`;
+  } catch(e){
+    dd.innerHTML=`<div class="steam-manual" onclick="useManualNom()">⌨ Steam search unavailable — add manually</div>`;
+  }
+}
+function onNomKeydown(e){
+  const dd=document.getElementById('steam-dropdown');
+  const items=dd?.querySelectorAll('.steam-item');
+  if(!items?.length){ if(e.key==='Enter') submitNom(); return; }
+  if(e.key==='ArrowDown'){ e.preventDefault(); steamDropdownIdx=Math.min(steamDropdownIdx+1,items.length-1); highlightDropdown(items); }
+  else if(e.key==='ArrowUp'){ e.preventDefault(); steamDropdownIdx=Math.max(steamDropdownIdx-1,-1); highlightDropdown(items); }
+  else if(e.key==='Enter'){ e.preventDefault(); if(steamDropdownIdx>=0) items[steamDropdownIdx]?.click(); else submitNom(); }
+  else if(e.key==='Escape'){ dd.style.display='none'; steamDropdownIdx=-1; }
+}
+function highlightDropdown(items){
+  items.forEach((el,i)=>el.classList.toggle('active',i===steamDropdownIdx));
+  if(steamDropdownIdx>=0) items[steamDropdownIdx]?.scrollIntoView({block:'nearest'});
+}
+function selectSteamGame(appId, name){
+  steamSelected={appId, name};
+  const el=document.getElementById('nom-input'); if(el) el.value=name;
+  const dd=document.getElementById('steam-dropdown'); if(dd) dd.style.display='none';
+}
+function useManualNom(){
+  steamSelected=null;
+  const dd=document.getElementById('steam-dropdown'); if(dd) dd.style.display='none';
+}
+
 async function submitNom(){
   const el=document.getElementById('nom-input'); if(!el) return;
-  const name=el.value.trim(); if(!name) return;
+  const name=(steamSelected?.name||el.value).trim(); if(!name) return;
   if(!nickname){ toast('Enter your nickname first!','err'); nav('screen-lobby'); renderLobby(); return; }
   if(nominations.some(n=>n.game_name.toLowerCase()===name.toLowerCase())){
     toast('Already nominated!','err'); return;
@@ -1398,9 +1539,13 @@ async function submitNom(){
   if(nominations.filter(n=>n.submitted_by===nickname).length>=max){
     toast(`Max ${max} nominations per person`,'err'); return;
   }
-  const {error}=await sb.from('nominations').insert({session_id:session.id,game_name:name,submitted_by:nickname});
+  const row={session_id:session.id,game_name:name,submitted_by:nickname};
+  if(steamSelected?.appId){ row.steam_app_id=String(steamSelected.appId); }
+  const {error}=await sb.from('nominations').insert(row);
   if(error){ toast('Error: '+error.message,'err'); return; }
-  el.value=''; toast(`"${name}" nominated!`,'ok');
+  steamSelected=null; el.value='';
+  const dd=document.getElementById('steam-dropdown'); if(dd) dd.style.display='none';
+  toast(`"${name}" nominated!`,'ok');
   await loadNominations(); renderNomScreen();
 }
 
@@ -1525,6 +1670,7 @@ function cardHtml(m,tpl){
       return `<div class="${rowCls}" ${clickFn?`onclick="${clickFn}"`:''}
         style="${canVote?'cursor:pointer;':'cursor:default;'}">
         <span class="b-vote-name${game?'':' tbd'}">${game?esc(game.game_name):'TBD'}</span>
+        ${game?.steam_app_id?`<span class='steam-btn' onclick='showSteamInfo(event,"${game.steam_app_id}")'>ℹ STEAM</span>`:''}
         ${myPick?`<span class="b-vote-check">✓ you</span>`:''}
         ${isRevealing?`<span class="b-vote-count">${gv}</span>`:''}
       </div>`;
@@ -1780,6 +1926,75 @@ async function init(){
     nav('screen-lobby');
     renderLobby();
   }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ▌ STEAM INFO MODAL
+// ══════════════════════════════════════════════════════════════════
+async function showSteamInfo(e, appId){
+  e.stopPropagation();
+  const modal=document.getElementById('steam-modal');
+  const inner=document.getElementById('steam-modal-inner');
+  inner.innerHTML='<div class="steam-loading">Fetching from Steam...</div>';
+  modal.classList.add('active');
+  try {
+    const proxy='https://corsproxy.io/?';
+    const url=`https://store.steampowered.com/api/appdetails?appids=${appId}&cc=US`;
+    const res=await fetch(proxy+encodeURIComponent(url));
+    const json=await res.json();
+    const data=json[appId]?.data;
+    if(!data){ inner.innerHTML='<div class="steam-loading">Game data unavailable.</div><div style="text-align:right;padding:8px 16px;"><button class="steam-modal-close" onclick="closeSteamModal()">Close</button></div>'; return; }
+
+    const price=data.is_free?'Free':data.price_overview?.final_formatted||'N/A';
+    const score=data.metacritic?.score;
+    const reviews=data.recommendations?.total;
+    const release=data.release_date?.date||'Unknown';
+    const genres=(data.genres||[]).map(g=>g.description).slice(0,4);
+    const devs=(data.developers||[]).join(', ');
+
+    // Multiplayer from categories
+    const cats=(data.categories||[]).map(c=>c.description);
+    const mpTags=['Multi-player','Online Co-op','Local Co-op','Co-op','Online PvP','Local PvP','Shared/Split Screen','MMO'];
+    const mp=cats.filter(c=>mpTags.some(t=>c.includes(t)));
+
+    // Review sentiment
+    let reviewTag='', reviewCls='';
+    if(data.review_score_desc && data.review_score_desc!=='No user reviews'){
+      reviewTag=data.review_score_desc; 
+      const score=data.review_score||0;
+      reviewCls=score>=7?'green':score>=4?'gold':'red';
+    }
+
+    const hero=`https://cdn.akamai.steamstatic.com/steam/apps/${appId}/header.jpg`;
+    inner.innerHTML=`
+      <img class="steam-modal-hero" src="${hero}" onerror="this.style.display='none'">
+      <div class="steam-modal-body">
+        <div class="steam-modal-title">${esc(data.name)}</div>
+        <div class="steam-modal-row">
+          <span class="steam-tag gold">${price}</span>
+          ${reviewTag?`<span class="steam-tag ${reviewCls}">${esc(reviewTag)}</span>`:''}
+          ${score?`<span class="steam-tag">Metacritic ${score}</span>`:''}
+        </div>
+        <div class="steam-modal-row">
+          ${genres.map(g=>`<span class="steam-tag">${esc(g)}</span>`).join('')}
+        </div>
+        ${mp.length?`<div class="steam-modal-row">
+          ${mp.map(t=>`<span class="steam-tag green">${esc(t)}</span>`).join('')}
+        </div>`:''}
+        <div class="steam-modal-stat">Released: <span>${esc(release)}</span></div>
+        ${devs?`<div class="steam-modal-stat">Developer: <span>${esc(devs)}</span></div>`:''}
+        ${reviews?`<div class="steam-modal-stat">Reviews: <span>${reviews.toLocaleString()}</span></div>`:''}
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;">
+          <a href="https://store.steampowered.com/app/${appId}" target="_blank" style="font-size:11px;color:var(--gold);letter-spacing:0.5px;">View on Steam →</a>
+          <button class="steam-modal-close" onclick="closeSteamModal()">Close</button>
+        </div>
+      </div>`;
+  } catch(err){
+    inner.innerHTML=`<div class="steam-loading">Failed to load — check your connection.</div><div style="text-align:right;padding:8px 16px;"><button class="steam-modal-close" onclick="closeSteamModal()">Close</button></div>`;
+  }
+}
+function closeSteamModal(){
+  document.getElementById('steam-modal').classList.remove('active');
 }
 
 init();
