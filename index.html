@@ -1985,12 +1985,19 @@ async function showSteamInfo(e, appId){
   inner.innerHTML='<div class="steam-loading">Fetching game info...</div>';
   modal.classList.add('active');
   try {
+    // Fetch with timeout helper
+    const fetchT=(url,ms=5000)=>{
+      const ctrl=new AbortController();
+      const t=setTimeout(()=>ctrl.abort(),ms);
+      return fetch(url,{signal:ctrl.signal}).finally(()=>clearTimeout(t));
+    };
+
     // Fetch all 4 in parallel: game details, stores (for Steam URL), screenshots, trailers
     const [rawgRes, storesRes, screensRes, moviesRes] = await Promise.all([
-      fetch(`https://api.rawg.io/api/games/${appId}?key=d3fe2a5bf52143c6b07d038257b45b11`),
-      fetch(`https://api.rawg.io/api/games/${appId}/stores?key=d3fe2a5bf52143c6b07d038257b45b11`).catch(()=>null),
-      fetch(`https://api.rawg.io/api/games/${appId}/screenshots?key=d3fe2a5bf52143c6b07d038257b45b11`).catch(()=>null),
-      fetch(`https://api.rawg.io/api/games/${appId}/movies?key=d3fe2a5bf52143c6b07d038257b45b11`).catch(()=>null),
+      fetchT(`https://api.rawg.io/api/games/${appId}?key=d3fe2a5bf52143c6b07d038257b45b11`),
+      fetchT(`https://api.rawg.io/api/games/${appId}/stores?key=d3fe2a5bf52143c6b07d038257b45b11`).catch(()=>null),
+      fetchT(`https://api.rawg.io/api/games/${appId}/screenshots?key=d3fe2a5bf52143c6b07d038257b45b11`).catch(()=>null),
+      fetchT(`https://api.rawg.io/api/games/${appId}/movies?key=d3fe2a5bf52143c6b07d038257b45b11`).catch(()=>null),
     ]);
     if(!rawgRes.ok) throw new Error('bad response');
     const d=await rawgRes.json();
@@ -2025,18 +2032,18 @@ async function showSteamInfo(e, appId){
       hasTrailer=(md.results||[]).length>0;
     }
 
-    // LV price via allorigins proxy (Steam blocks direct CORS)
+    // Price via SteamSpy — has proper CORS, gives USD price
     let lvPrice='';
     if(steamAppId){
       try {
-        const proxyUrl=`https://api.allorigins.win/raw?url=${encodeURIComponent('https://store.steampowered.com/api/appdetails?appids='+steamAppId+'&cc=lv&filters=price_overview')}`;
-        const pr=await fetch(proxyUrl);
+        const pr=await fetchT(`https://steamspy.com/api.php?request=appdetails&appid=${steamAppId}`,4000);
         if(pr.ok){
           const pj=await pr.json();
-          const app=pj[steamAppId];
-          if(app?.success){
-            if(app.data?.price_overview) lvPrice=app.data.price_overview.final_formatted;
-            else if(app.data?.is_free===true) lvPrice='Free';
+          if(pj?.price===0) lvPrice='Free';
+          else if(pj?.price>0){
+            const usd=(pj.price/100).toFixed(2);
+            const discounted=pj.discount>0?` (-${pj.discount}%)` :'';
+            lvPrice=`$${usd}${discounted} USD`;
           }
         }
       } catch(pe){ lvPrice=''; }
@@ -2078,7 +2085,7 @@ async function showSteamInfo(e, appId){
       <div class="steam-modal-body">
         <div class="steam-modal-title">${esc(d.name)}</div>
         <div class="steam-modal-row">
-          ${lvPrice?`<span class="steam-tag gold">🇱🇻 ${lvPrice}</span>`:''}
+          ${lvPrice?`<span class="steam-tag gold">💰 ${lvPrice}</span>`:''}
           ${rating?`<span class="steam-tag gold">${rating}</span>`:''}
           ${metacritic?`<span class="steam-tag ${metacritic>=75?'green':metacritic>=50?'gold':'red'}">Metacritic ${metacritic}</span>`:''}
           ${reviewTag?`<span class="steam-tag ${reviewCls}">${reviewTag}</span>`:''}
