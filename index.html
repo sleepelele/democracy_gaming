@@ -937,10 +937,13 @@ async function generateBracket(){
   const dbMap={};
   inserted.forEach(m=>dbMap[m.template_id]=m);
 
-  // Assign seeds to W-R1 matchups
+  // Assign seeds to W-R1 matchups using interleaved seeding:
+  // Fill game1 slots first (indices 0..n-1), then game2 slots (indices n..2n-1).
+  // This spreads byes evenly across matchups instead of stacking double-byes at the end.
   const r1s=inserted.filter(m=>m.bracket==='winners'&&m.round===1).sort((a,b)=>a.position-b.position);
+  const numR1=r1s.length;
   for(let i=0;i<r1s.length;i++){
-    const g1=shuffled[i*2]||null, g2=shuffled[i*2+1]||null;
+    const g1=shuffled[i]||null, g2=shuffled[i+numR1]||null;
     const upd={};
     if(g1) upd.game1_id=g1.id;
     if(g2) upd.game2_id=g2.id;
@@ -1431,6 +1434,11 @@ function renderBracket(){
             <div class="round-matches">${ms.map((m,i)=>(i>0?'<div class="b-spacer"></div>':'')+cardHtml(m,tpl)).join('')}</div>
           </div>`;
         }).join('')}
+        ${GF.length?`
+        <div class="bracket-col" style="border-left:1px solid var(--border2);margin-left:4px;padding-left:4px;">
+          <div class="round-label" style="color:var(--gold-bright);letter-spacing:2px;">⚔ GRAND FINAL</div>
+          <div class="round-matches">${GF.map(m=>cardHtml(m,tpl)).join('')}</div>
+        </div>`:''}
       </div>
     </div>
     ${L.length?`
@@ -1444,13 +1452,6 @@ function renderBracket(){
             <div class="round-matches">${ms.map((m,i)=>(i>0?'<div class="b-spacer"></div>':'')+cardHtml(m,tpl)).join('')}</div>
           </div>`;
         }).join('')}
-      </div>
-    </div>`:''}
-    ${GF.length?`
-    <div class="bracket-section">
-      <div class="b-section-label gf">GRAND FINAL</div>
-      <div class="bracket-rounds">
-        <div class="bracket-col">${GF.map(m=>cardHtml(m,tpl)).join('')}</div>
       </div>
     </div>`:''}
   `;
