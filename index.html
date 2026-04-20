@@ -314,7 +314,7 @@
     .b-game + .b-game { border-top: 1px solid var(--border); }
     .b-game.tbd   { color: var(--text-muted); font-style: italic; }
     .b-game.won   { color: var(--gold); }
-    .b-game.lost  { color: var(--text-muted); text-decoration: line-through; opacity: .5; }
+    .b-game.lost  { color: var(--cream-dim); text-decoration: line-through; text-decoration-color: var(--cream-dim); opacity: 0.75; }
     .b-vs {
       padding: 2px 10px; text-align: center; font-size: 8px; font-weight: 500;
       letter-spacing: 2px; text-transform: uppercase;
@@ -335,7 +335,7 @@
     .b-vote-row:hover:not(.voted):not(.revealed) { background: var(--gold-dim); }
     .b-vote-row.my-vote { background: var(--gold-dim); }
     .b-vote-row.win-row  { background: var(--green-dim); }
-    .b-vote-row.lose-row { opacity: .45; }
+    .b-vote-row.lose-row { opacity: 0.65; text-decoration: line-through; text-decoration-color: var(--text-dim); }
     .b-vote-name { flex: 1; font-size: 12px; font-weight: 500; color: var(--text); padding: 4px 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; }
     .b-vote-name.tbd { color: var(--text-muted); font-style: italic; }
     .b-vote-check { font-size: 10px; color: var(--gold); margin-left: 6px; flex-shrink: 0; }
@@ -937,13 +937,13 @@ async function generateBracket(){
   const dbMap={};
   inserted.forEach(m=>dbMap[m.template_id]=m);
 
-  // Assign seeds to W-R1 matchups using interleaved seeding:
-  // Fill game1 slots first (indices 0..n-1), then game2 slots (indices n..2n-1).
-  // This spreads byes evenly across matchups instead of stacking double-byes at the end.
+  // Sequential seeding: fill R1 matchups pair by pair so real games are
+  // matched against each other first. Byes cluster at the end of R1.
+  // For 5 games: G1vsG2 (real), G3vsG4 (real), G5vsBYE, BYEvsBYE.
+  // This ensures L-R1 gets real losers to face each other.
   const r1s=inserted.filter(m=>m.bracket==='winners'&&m.round===1).sort((a,b)=>a.position-b.position);
-  const numR1=r1s.length;
   for(let i=0;i<r1s.length;i++){
-    const g1=shuffled[i]||null, g2=shuffled[i+numR1]||null;
+    const g1=shuffled[i*2]||null, g2=shuffled[i*2+1]||null;
     const upd={};
     if(g1) upd.game1_id=g1.id;
     if(g2) upd.game2_id=g2.id;
@@ -1005,12 +1005,17 @@ async function cascadeByes(dbMap,tpl){
         const feederTpl=tpl.find(x=>
           (x.winTo===tplId&&x.winS===emptySlot)||(x.loseTo===tplId&&x.loseS===emptySlot)
         );
-        if(feederTpl&&dbMap[feederTpl.id]?.status==='bye'){
-          // The feeder was a double-bye → this slot will never be filled → auto-advance
-          const winnerId=hasG1?m.game1_id:m.game2_id;
-          await sb.from('matchups').update({winner_id:winnerId,status:'complete'}).eq('id',m.id);
-          m.winner_id=winnerId; m.status='complete'; m._routed=false;
-          changed=true;
+        if(feederTpl){
+          const feederRow=dbMap[feederTpl.id];
+          // Only auto-advance if feeder is a true double-bye (no winner at all = no real game was ever there)
+          if(feederRow?.status==='bye'&&!feederRow?.winner_id){
+            const winnerId=hasG1?m.game1_id:m.game2_id;
+            // Mark as complete but do NOT set _routed=false — stops cascade propagating further
+            await sb.from('matchups').update({winner_id:winnerId,status:'complete'}).eq('id',m.id);
+            m.winner_id=winnerId; m.status='complete';
+            // Don't cascade further: leave _routed unset so this won't route onwards
+            changed=true;
+          }
         }
       }
     }
@@ -1427,7 +1432,10 @@ function renderBracket(){
       <div class="b-section-label winners">WINNERS BRACKET</div>
       <div class="bracket-rounds">
         ${wRounds.map(r=>{
-          const ms=W.filter(m=>m.round===r).sort((a,b)=>a.position-b.position);
+          const ms=W.filter(m=>m.round===r)
+            .filter(m=>m.game1_id||m.game2_id) // hide ghost double-bye slots
+            .sort((a,b)=>a.position-b.position);
+          if(!ms.length) return ''; // skip empty rounds
           const label=r===maxWR?'Winners Final':`Round ${r}`;
           return `<div class="bracket-col">
             <div class="round-label">${label}</div>
@@ -1446,7 +1454,10 @@ function renderBracket(){
       <div class="b-section-label losers">LOSERS BRACKET</div>
       <div class="bracket-rounds">
         ${lRounds.map(r=>{
-          const ms=L.filter(m=>m.round===r).sort((a,b)=>a.position-b.position);
+          const ms=L.filter(m=>m.round===r)
+            .filter(m=>m.game1_id||m.game2_id)
+            .sort((a,b)=>a.position-b.position);
+          if(!ms.length) return '';
           return `<div class="bracket-col">
             <div class="round-label">Round ${r}</div>
             <div class="round-matches">${ms.map((m,i)=>(i>0?'<div class="b-spacer"></div>':'')+cardHtml(m,tpl)).join('')}</div>
