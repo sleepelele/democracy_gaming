@@ -2051,8 +2051,21 @@ async function showSteamInfo(e, appId){
       hasTrailer=(md.results||[]).length>0;
     }
 
-    // Price: Steam blocks all CORS — show direct LV store link instead
-    const lvPrice=steamAppId?'link':'';
+    // Price via our own Vercel proxy — no CORS issues
+    let lvPrice='';
+    if(steamAppId){
+      try {
+        const pr=await fetchT(`https://steam-proxy123.vercel.app/api/price?appid=${steamAppId}`,5000);
+        if(pr.ok){
+          const pj=await pr.json();
+          const app=pj[steamAppId];
+          if(app?.success){
+            if(app.data?.price_overview) lvPrice=app.data.price_overview.final_formatted;
+            else if(app.data?.is_free===true) lvPrice='Free';
+          }
+        }
+      } catch(pe){ lvPrice=''; }
+    }
 
     // Game metadata
     const metacritic=d.metacritic;
@@ -2090,7 +2103,8 @@ async function showSteamInfo(e, appId){
       <div class="steam-modal-body">
         <div class="steam-modal-title">${esc(d.name)}</div>
         <div class="steam-modal-row">
-          ${steamAppId?`<a href="https://store.steampowered.com/app/${steamAppId}/?cc=lv" target="_blank" class="steam-tag gold" style="text-decoration:none;">🇱🇻 Check LV Price →</a>`:''}
+          ${lvPrice?`<span class="steam-tag gold">🇱🇻 ${lvPrice}</span>`
+            :steamAppId?`<a href="https://store.steampowered.com/app/${steamAppId}/?cc=lv" target="_blank" class="steam-tag gold" style="text-decoration:none;">🇱🇻 Check Price →</a>`:''}
           ${rating?`<span class="steam-tag gold">${rating}</span>`:''}
           ${metacritic?`<span class="steam-tag ${metacritic>=75?'green':metacritic>=50?'gold':'red'}">Metacritic ${metacritic}</span>`:''}
           ${reviewTag?`<span class="steam-tag ${reviewCls}">${reviewTag}</span>`:''}
