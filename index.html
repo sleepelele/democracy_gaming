@@ -2008,16 +2008,8 @@ async function showSteamInfo(e, appId){
       ? `https://store.steampowered.com/app/${steamAppId}/`
       : `https://store.steampowered.com/search/?term=${encodeURIComponent(d.name)}`;
 
-    // Build media list: trailers first (prefer 480p — more reliable), then screenshots
+    // Build media list: screenshots only (Steam CDN blocks video hotlinking)
     const media=[];
-    if(moviesRes?.ok){
-      const md=await moviesRes.json();
-      for(const clip of (md.results||[]).slice(0,3)){
-        const src=clip.data?.['480']||clip.data?.max||'';
-        const src2=clip.data?.max||'';
-        if(src) media.push({type:'video', src, src2, poster:clip.preview||''});
-      }
-    }
     if(screensRes?.ok){
       const sc=await screensRes.json();
       for(const img of (sc.results||[]).slice(0,10)){
@@ -2026,18 +2018,25 @@ async function showSteamInfo(e, appId){
     }
     if(!media.length && d.background_image) media.push({type:'image', src:d.background_image});
 
-    // LV price — fetch without filters param (more reliable CORS-wise)
+    // Check if RAWG has a trailer (to show the Watch button)
+    let hasTrailer=false;
+    if(moviesRes?.ok){
+      const md=await moviesRes.json();
+      hasTrailer=(md.results||[]).length>0;
+    }
+
+    // LV price via allorigins proxy (Steam blocks direct CORS)
     let lvPrice='';
     if(steamAppId){
       try {
-        const pr=await fetch(`https://store.steampowered.com/api/appdetails?appids=${steamAppId}&cc=lv`);
+        const proxyUrl=`https://api.allorigins.win/raw?url=${encodeURIComponent('https://store.steampowered.com/api/appdetails?appids='+steamAppId+'&cc=lv&filters=price_overview')}`;
+        const pr=await fetch(proxyUrl);
         if(pr.ok){
           const pj=await pr.json();
           const app=pj[steamAppId];
           if(app?.success){
             if(app.data?.price_overview) lvPrice=app.data.price_overview.final_formatted;
             else if(app.data?.is_free===true) lvPrice='Free';
-            else if(!app.data?.price_overview) lvPrice='Free';
           }
         }
       } catch(pe){ lvPrice=''; }
@@ -2092,8 +2091,11 @@ async function showSteamInfo(e, appId){
           :'<div class="steam-modal-stat" style="color:var(--text-muted);font-style:italic;font-size:11px;">No multiplayer info found</div>'}
         <div class="steam-modal-stat">Released: <span>${esc(released)}</span></div>
         ${devs?`<div class="steam-modal-stat">Developer: <span>${esc(devs)}</span></div>`:''}
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;">
-          <a href="${steamLink}" target="_blank" style="font-size:11px;color:var(--gold);letter-spacing:0.5px;">View on Steam →</a>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;gap:8px;flex-wrap:wrap;">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <a href="${steamLink}" target="_blank" style="font-size:11px;color:var(--gold);letter-spacing:0.5px;">View on Steam →</a>
+            ${hasTrailer&&steamAppId?`<a href="https://store.steampowered.com/app/${steamAppId}/" target="_blank" style="font-size:11px;color:var(--text-dim);letter-spacing:0.5px;">▶ Watch Trailer</a>`:''}
+          </div>
           <button class="steam-modal-close" onclick="closeSteamModal()">Close</button>
         </div>
       </div>`;
