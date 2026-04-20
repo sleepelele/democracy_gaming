@@ -324,6 +324,29 @@
     .b-actions { display: flex; gap: 4px; flex-wrap: wrap; padding: 6px 8px; background: var(--surface2); border-top: 1px solid var(--border); }
     .b-spacer { height: 10px; }
 
+    /* ── Inline voting on bracket cards ── */
+    .b-vote-area { border-top: 1px solid var(--border); }
+    .b-vote-row {
+      display: flex; align-items: center; gap: 0;
+      padding: 5px 8px; cursor: pointer; transition: background 0.15s;
+      border-bottom: 1px solid var(--border);
+    }
+    .b-vote-row:last-child { border-bottom: none; }
+    .b-vote-row:hover:not(.voted):not(.revealed) { background: var(--gold-dim); }
+    .b-vote-row.my-vote { background: var(--gold-dim); }
+    .b-vote-row.win-row  { background: var(--green-dim); }
+    .b-vote-row.lose-row { opacity: .45; }
+    .b-vote-name { flex: 1; font-size: 12px; font-weight: 500; color: var(--text); padding: 4px 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .b-vote-name.tbd { color: var(--text-muted); font-style: italic; }
+    .b-vote-check { font-size: 10px; color: var(--gold); margin-left: 6px; flex-shrink: 0; }
+    .b-vote-count { font-size: 11px; color: var(--gold); font-weight: 600; margin-left: 6px; flex-shrink: 0; min-width: 20px; text-align: right; }
+    .b-vote-footer {
+      padding: 5px 10px; font-size: 10px; color: var(--text-muted);
+      letter-spacing: 0.5px; background: var(--surface2);
+      border-top: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+
     /* ── Vote screen ── */
     #screen-vote {
       display: none; flex-direction: column; align-items: center; justify-content: center;
@@ -867,10 +890,10 @@ function setupRealtime(){
       updateHeader();
       const a=activeMatchup();
       document.getElementById('tab-vote').classList.toggle('has-ping',!!a);
-      // Auto-navigate everyone to vote screen when a match goes live
-      if(a&&a.status==='voting'&&activeScreen!=='screen-admin'){
+      // When a match goes live, navigate everyone to the bracket to vote inline
+      if(a&&a.status==='voting'&&activeScreen!=='screen-admin'&&activeScreen!=='screen-bracket'){
         playVoteSound();
-        nav('screen-vote');
+        nav('screen-bracket');
       } else {
         if(activeScreen==='screen-bracket') renderBracket();
         if(activeScreen==='screen-vote') renderVoteScreen();
@@ -879,6 +902,7 @@ function setupRealtime(){
     })
     .on('postgres_changes',{event:'*',schema:'public',table:'votes'},async()=>{
       await loadActiveVotes();
+      if(activeScreen==='screen-bracket') renderBracket();
       if(activeScreen==='screen-vote') renderVoteScreen();
       if(activeScreen==='screen-admin') renderAdminContent();
     })
@@ -1061,7 +1085,9 @@ async function castVote(matchupId, gameId){
     return;
   }
   toast('Voted ✓','ok');
-  await loadActiveVotes(); renderVoteScreen();
+  await loadActiveVotes();
+  if(activeScreen==='screen-bracket') renderBracket();
+  renderVoteScreen();
 }
 function myVote(matchupId){ return activeVotes.find(v=>v.device_token===deviceToken&&v.matchup_id===matchupId); }
 
@@ -1106,7 +1132,7 @@ async function adminStartVoting(matchupId){
   await sb.from('matchups').update({status:'voting'}).eq('id',matchupId);
   await loadActiveVotes();
   playVoteSound();
-  nav('screen-vote');
+  nav('screen-bracket');
   toast('Voting started!','ok');
 }
 async function adminReveal(matchupId){
@@ -1423,24 +1449,72 @@ function renderBracket(){
 function cardHtml(m,tpl){
   const g1=m.game1_id?nominations.find(n=>n.id===m.game1_id):null;
   const g2=m.game2_id?nominations.find(n=>n.id===m.game2_id):null;
-  const g1cls=m.status==='complete'||m.status==='bye'?(m.winner_id===m.game1_id?'won':'lost'):'';
-  const g2cls=m.status==='complete'||m.status==='bye'?(m.winner_id===m.game2_id?'won':'lost'):'';
   const pills={pending:'st-pill-pending',voting:'st-pill-voting',revealing:'st-pill-revealing',complete:'st-pill-complete',bye:'st-pill-bye'};
   const pillLabels={pending:'Pending',voting:'🔴 Voting',revealing:'👁 Revealed',complete:'✓ Done',bye:'Bye'};
   const isTie=tieMatchupId===m.id;
 
+  // Determine game win/loss state for completed matches
+  const g1done=m.status==='complete'||m.status==='bye';
+  const g1cls=g1done?(m.winner_id===m.game1_id?'won':'lost'):'';
+  const g2cls=g1done?(m.winner_id===m.game2_id?'won':'lost'):'';
+
+  // Voting state
+  const isVoting=m.status==='voting';
+  const isRevealing=m.status==='revealing';
+  const mv=activeVotes.find(v=>v.matchup_id===m.id&&v.device_token===deviceToken);
+  const totalVotes=activeVotes.filter(v=>v.matchup_id===m.id).length;
+  const g1v=activeVotes.filter(v=>v.matchup_id===m.id&&v.game_id===m.game1_id).length;
+  const g2v=activeVotes.filter(v=>v.matchup_id===m.id&&v.game_id===m.game2_id).length;
+
+  // Build vote rows
+  let voteHtml='';
+  if(isVoting||isRevealing){
+    const canVote=isVoting&&!mv;
+    const rows=[
+      {game:g1,gid:m.game1_id,gv:g1v,isWin:isRevealing&&g1v>g2v,isLose:isRevealing&&g2v>g1v},
+      {game:g2,gid:m.game2_id,gv:g2v,isWin:isRevealing&&g2v>g1v,isLose:isRevealing&&g1v>g2v},
+    ];
+    const rowsHtml=rows.map(({game,gid,gv,isWin,isLose})=>{
+      const myPick=mv?.game_id===gid;
+      let rowCls='b-vote-row';
+      if(myPick) rowCls+=' my-vote';
+      if(isRevealing&&isWin) rowCls+=' win-row';
+      if(isRevealing&&isLose) rowCls+=' lose-row';
+      if(mv||isRevealing) rowCls+=' voted';
+      const clickFn=canVote&&gid?`castVote('${m.id}','${gid}')`:'';
+      return `<div class="${rowCls}" ${clickFn?`onclick="${clickFn}"`:''}
+        style="${canVote?'cursor:pointer;':'cursor:default;'}">
+        <span class="b-vote-name${game?'':' tbd'}">${game?esc(game.game_name):'TBD'}</span>
+        ${myPick?`<span class="b-vote-check">✓ you</span>`:''}
+        ${isRevealing?`<span class="b-vote-count">${gv}</span>`:''}
+      </div>`;
+    }).join('');
+
+    voteHtml=`<div class="b-vote-area">
+      ${rowsHtml}
+      <div class="b-vote-footer">
+        <span>${mv?'Vote cast':'Click to vote'}</span>
+        <span>${totalVotes} vote${totalVotes!==1?'s':''} cast</span>
+      </div>
+    </div>`;
+  } else {
+    // Not voting — show plain game names
+    voteHtml=`
+      <div class="b-game ${g1?g1cls:'tbd'}">${g1?esc(g1.game_name):'TBD'}</div>
+      <div class="b-vs">VS</div>
+      <div class="b-game ${g2?g2cls:'tbd'}">${g2?esc(g2.game_name):'TBD'}</div>`;
+  }
+
+  // Admin controls
   const canStart=isAdmin&&m.status==='pending'&&m.game1_id&&m.game2_id;
   const canReveal=isAdmin&&m.status==='voting';
   const canComplete=isAdmin&&m.status==='revealing';
-  const adminHtml=isAdmin&&(canStart||canReveal||canComplete)?`
+  const adminHtml=(canStart||canReveal||canComplete)?`
     <div class="b-actions">
       ${canStart?`<button class="btn btn-cyan btn-sm" onclick="adminStartVoting('${m.id}')">▶ Start</button>`:''}
       ${canReveal?`<button class="btn btn-amber btn-sm" onclick="adminReveal('${m.id}')">👁 Reveal</button>`:''}
       ${canComplete&&!isTie?`<button class="btn btn-green btn-sm" onclick="adminComplete('${m.id}')">✓ Complete</button>`:''}
-      ${isTie?`<div style="width:100%;"><div style="font-size:10px;color:var(--amber);margin-bottom:4px;">TIE — pick winner:</div>
-        ${g1?`<button class="btn btn-ghost btn-sm" style="width:100%;margin-bottom:4px;" onclick="adminForceWinner('${m.id}','${m.game1_id}')">${esc(g1.game_name)}</button>`:''}
-        ${g2?`<button class="btn btn-ghost btn-sm" style="width:100%;" onclick="adminForceWinner('${m.id}','${m.game2_id}')">${esc(g2.game_name)}</button>`:''}
-      </div>`:''}
+      ${isTie?`<div style="width:100%;font-size:10px;color:var(--gold);margin-bottom:4px;">TIE — oracle decides</div>`:''}
     </div>`:'';
 
   return `<div class="b-card st-${m.status}">
@@ -1448,9 +1522,7 @@ function cardHtml(m,tpl){
       <span>${esc(m.template_id)}</span>
       <span class="st-pill ${pills[m.status]||'st-pill-pending'}">${pillLabels[m.status]||m.status}</span>
     </div>
-    <div class="b-game ${g1?g1cls:'tbd'}">${g1?esc(g1.game_name):'TBD'}</div>
-    <div class="b-vs">VS</div>
-    <div class="b-game ${g2?g2cls:'tbd'}">${g2?esc(g2.game_name):'TBD'}</div>
+    ${voteHtml}
     ${adminHtml}
   </div>`;
 }
