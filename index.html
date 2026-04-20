@@ -1186,8 +1186,24 @@ async function adminForceWinner(matchupId,winnerId){
 async function adminReset(){
   if(!confirm('Reset entire session? All data will be deleted.')) return;
   if(!confirm('Sure? This cannot be undone.')) return;
-  await sb.from('game_sessions').delete().eq('id',session.id);
-  session=null; nominations=[]; matchups=[]; isAdmin=false;
+  const sid=session.id;
+  try {
+    // Delete in dependency order to avoid FK constraint errors
+    await sb.from('votes').delete().eq('matchup_id', sb.from('matchups').select('id').eq('session_id',sid));
+    const {data:mids}=await sb.from('matchups').select('id').eq('session_id',sid);
+    if(mids?.length) await sb.from('votes').delete().in('matchup_id', mids.map(m=>m.id));
+    await sb.from('matchups').delete().eq('session_id',sid);
+    await sb.from('nominations').delete().eq('session_id',sid);
+    await sb.from('join_requests').delete().eq('session_id',sid).catch(()=>{});
+    const {error}=await sb.from('game_sessions').delete().eq('id',sid);
+    if(error) throw error;
+  } catch(e){
+    toast('Reset failed: '+e.message,'err'); return;
+  }
+  // Clear all local state including nickname so refresh starts fresh
+  session=null; nominations=[]; matchups=[]; joinRequests=[]; isAdmin=false;
+  nickname=''; localStorage.removeItem('nickname');
+  document.getElementById('header-nick').textContent='';
   document.getElementById('admin-gate').style.display='block';
   document.getElementById('admin-panel').style.display='none';
   document.getElementById('nav-tabs').classList.remove('show');
