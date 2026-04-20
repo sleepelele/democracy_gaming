@@ -1179,6 +1179,16 @@ async function checkAndCascade(){
 // ══════════════════════════════════════════════════════════════════
 // ▌ VOTING
 // ══════════════════════════════════════════════════════════════════
+function setPendingVote(matchupId, gameId){
+  // Toggle off if same game clicked again
+  if(pendingVote?.matchupId===matchupId&&pendingVote?.gameId===gameId){
+    pendingVote=null;
+  } else {
+    pendingVote={matchupId, gameId};
+  }
+  renderBracket();
+}
+
 async function castVote(matchupId, gameId){
   const {error}=await sb.from('votes').insert({matchup_id:matchupId,game_id:gameId,device_token:deviceToken,voter_name:nickname});
   if(error){
@@ -1187,6 +1197,7 @@ async function castVote(matchupId, gameId){
     return;
   }
   toast('Voted ✓','ok');
+  pendingVote=null;
   await loadActiveVotes();
   if(activeScreen==='screen-bracket') renderBracket();
   renderVoteScreen();
@@ -1505,6 +1516,7 @@ function renderNomScreen(){
 let steamSelected=null; // {appId, name, data} — set when user picks from dropdown
 let steamSearchTimer=null;
 let steamDropdownIdx=-1;
+let pendingVote=null; // {matchupId, gameId} — highlighted but not yet locked
 
 async function onNomInput(val){
   steamSelected=null; // clear selection when typing
@@ -1696,31 +1708,38 @@ function cardHtml(m,tpl){
   let voteHtml='';
   if(isVoting||isRevealing){
     const canVote=isVoting&&!mv;
+    const isPending=canVote&&pendingVote?.matchupId===m.id;
     const rows=[
       {game:g1,gid:m.game1_id,gv:g1v,isWin:isRevealing&&g1v>g2v,isLose:isRevealing&&g2v>g1v},
       {game:g2,gid:m.game2_id,gv:g2v,isWin:isRevealing&&g2v>g1v,isLose:isRevealing&&g1v>g2v},
     ];
     const rowsHtml=rows.map(({game,gid,gv,isWin,isLose})=>{
       const myPick=mv?.game_id===gid;
+      const isPendingThis=isPending&&pendingVote?.gameId===gid;
       let rowCls='b-vote-row';
-      if(myPick) rowCls+=' my-vote';
+      if(myPick||isPendingThis) rowCls+=' my-vote';
       if(isRevealing&&isWin) rowCls+=' win-row';
       if(isRevealing&&isLose) rowCls+=' lose-row';
       if(mv||isRevealing) rowCls+=' voted';
-      const clickFn=canVote&&gid?`castVote('${m.id}','${gid}')`:'';
+      const clickFn=canVote&&gid?`setPendingVote('${m.id}','${gid}')`:'';;
       return `<div class="${rowCls}" ${clickFn?`onclick="${clickFn}"`:''}
         style="${canVote?'cursor:pointer;':'cursor:default;'}">
         <span class="b-vote-name${game?'':' tbd'}">${game?esc(game.game_name):'TBD'}</span>
         ${game?.steam_app_id?`<span class='steam-btn' onclick='showSteamInfo(event,"${game.steam_app_id}")'>ℹ STEAM</span>`:''}
         ${myPick?`<span class="b-vote-check">✓ you</span>`:''}
+        ${isPendingThis?`<span class="b-vote-check">← selected</span>`:''}
         ${isRevealing?`<span class="b-vote-count">${gv}</span>`:''}
       </div>`;
     }).join('');
 
+    const lockBtn=isPending?`<button class="btn btn-amber btn-sm" style="width:100%;margin-top:6px;"
+      onclick="castVote('${m.id}','${pendingVote.gameId}')">🔒 Lock In Vote</button>`:'';
+
     voteHtml=`<div class="b-vote-area">
       ${rowsHtml}
+      ${lockBtn}
       <div class="b-vote-footer">
-        <span>${mv?'Vote cast':'Click to vote'}</span>
+        <span>${mv?'Vote cast':isPending?'Confirm your pick below':'Click a game to pick'}</span>
         <span>${totalVotes} vote${totalVotes!==1?'s':''} cast</span>
       </div>
     </div>`;
@@ -2032,22 +2051,8 @@ async function showSteamInfo(e, appId){
       hasTrailer=(md.results||[]).length>0;
     }
 
-    // Price via SteamSpy — has proper CORS, gives USD price
-    let lvPrice='';
-    if(steamAppId){
-      try {
-        const pr=await fetchT(`https://steamspy.com/api.php?request=appdetails&appid=${steamAppId}`,4000);
-        if(pr.ok){
-          const pj=await pr.json();
-          if(pj?.price===0) lvPrice='Free';
-          else if(pj?.price>0){
-            const usd=(pj.price/100).toFixed(2);
-            const discounted=pj.discount>0?` (-${pj.discount}%)` :'';
-            lvPrice=`$${usd}${discounted} USD`;
-          }
-        }
-      } catch(pe){ lvPrice=''; }
-    }
+    // Price: Steam blocks all CORS — show direct LV store link instead
+    const lvPrice=steamAppId?'link':'';
 
     // Game metadata
     const metacritic=d.metacritic;
@@ -2085,7 +2090,7 @@ async function showSteamInfo(e, appId){
       <div class="steam-modal-body">
         <div class="steam-modal-title">${esc(d.name)}</div>
         <div class="steam-modal-row">
-          ${lvPrice?`<span class="steam-tag gold">💰 ${lvPrice}</span>`:''}
+          ${steamAppId?`<a href="https://store.steampowered.com/app/${steamAppId}/?cc=lv" target="_blank" class="steam-tag gold" style="text-decoration:none;">🇱🇻 Check LV Price →</a>`:''}
           ${rating?`<span class="steam-tag gold">${rating}</span>`:''}
           ${metacritic?`<span class="steam-tag ${metacritic>=75?'green':metacritic>=50?'gold':'red'}">Metacritic ${metacritic}</span>`:''}
           ${reviewTag?`<span class="steam-tag ${reviewCls}">${reviewTag}</span>`:''}
