@@ -867,9 +867,15 @@ function setupRealtime(){
       updateHeader();
       const a=activeMatchup();
       document.getElementById('tab-vote').classList.toggle('has-ping',!!a);
-      if(activeScreen==='screen-bracket') renderBracket();
-      if(activeScreen==='screen-vote') renderVoteScreen();
-      if(activeScreen==='screen-admin') renderAdminContent();
+      // Auto-navigate everyone to vote screen when a match goes live
+      if(a&&a.status==='voting'&&activeScreen!=='screen-admin'){
+        playVoteSound();
+        nav('screen-vote');
+      } else {
+        if(activeScreen==='screen-bracket') renderBracket();
+        if(activeScreen==='screen-vote') renderVoteScreen();
+        if(activeScreen==='screen-admin') renderAdminContent();
+      }
     })
     .on('postgres_changes',{event:'*',schema:'public',table:'votes'},async()=>{
       await loadActiveVotes();
@@ -1086,11 +1092,22 @@ async function adminLockAndGenerate(){
   const ok=await generateBracket();
   if(ok){ await loadSession(); renderAdminContent(); nav('screen-bracket'); }
 }
+function playVoteSound(){
+  try {
+    const audio=new Audio('vote.mp3');
+    audio.volume=0.7;
+    audio.play().catch(()=>{}); // silently ignore if file not found yet
+  } catch(e){}
+}
+
 async function adminStartVoting(matchupId){
   if(activeMatchup()){ toast('Finish the current match first','err'); return; }
   coinFlip=null;
   await sb.from('matchups').update({status:'voting'}).eq('id',matchupId);
-  await loadActiveVotes(); toast('Voting started!','ok');
+  await loadActiveVotes();
+  playVoteSound();
+  nav('screen-vote');
+  toast('Voting started!','ok');
 }
 async function adminReveal(matchupId){
   await sb.from('matchups').update({status:'revealing'}).eq('id',matchupId);
@@ -1334,6 +1351,19 @@ function renderBracket(){
     el.innerHTML=`<div style="text-align:center;padding:60px;color:var(--text-muted);">Bracket not generated yet</div>`;
     return;
   }
+  const a=activeMatchup();
+  const liveBanner=a?`
+    <div onclick="nav('screen-vote')" style="
+      cursor:pointer; margin:0 20px 20px; padding:14px 20px;
+      background:var(--gold-dim); border:1px solid var(--gold); border-radius:var(--r);
+      display:flex; align-items:center; gap:12px;
+    ">
+      <div style="width:8px;height:8px;border-radius:50%;background:var(--gold);animation:ping .8s ease-in-out infinite;flex-shrink:0;"></div>
+      <div>
+        <div style="font-family:var(--font-h);font-style:italic;color:var(--gold);font-size:16px;">Voting Is Live</div>
+        <div style="font-size:11px;color:var(--text-dim);margin-top:2px;">Tap here to go vote →</div>
+      </div>
+    </div>`:'';
   const tpl=getTemplate();
   const W=matchups.filter(m=>m.bracket==='winners');
   const L=matchups.filter(m=>m.bracket==='losers');
@@ -1353,7 +1383,7 @@ function renderBracket(){
     </div>`;
   }
 
-  el.innerHTML=champHtml+`
+  el.innerHTML=liveBanner+champHtml+`
     <div class="bracket-section">
       <div class="b-section-label winners">WINNERS BRACKET</div>
       <div class="bracket-rounds">
