@@ -718,7 +718,7 @@ const SUPABASE_URL = 'https://dyttrevzhxjmtdiynfpu.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR5dHRyZXZ6aHhqbXRkaXluZnB1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0NzQzNTgsImV4cCI6MjA5MTA1MDM1OH0.jfEEylD0LnXmitqy7lWDmL0TlGADaCvIW-yDhmuZHTg';
 const ADMIN_PASSWORD = 'suns123';
 // ← Paste your free RAWG API key here: rawg.io/apidocs
-const RAWG_KEY = 'd3fe2a5bf52143c6b07d038257b45b11';
+const RAWG_KEY = 'YOUR_RAWG_KEY';
 // ← Paste your GitHub image URL here (e.g. 'https://raw.githubusercontent.com/sleepelele/democracy_gaming/main/bg.jpg')
 const LOBBY_BG_URL = '';
 
@@ -2008,12 +2008,14 @@ async function showSteamInfo(e, appId){
       ? `https://store.steampowered.com/app/${steamAppId}/`
       : `https://store.steampowered.com/search/?term=${encodeURIComponent(d.name)}`;
 
-    // Build media list: trailers first, then screenshots
+    // Build media list: trailers first (prefer 480p — more reliable), then screenshots
     const media=[];
     if(moviesRes?.ok){
       const md=await moviesRes.json();
-      for(const clip of (md.results||[]).slice(0,2)){
-        if(clip.data?.max) media.push({type:'video', src:clip.data.max, poster:clip.preview||''});
+      for(const clip of (md.results||[]).slice(0,3)){
+        const src=clip.data?.['480']||clip.data?.max||'';
+        const src2=clip.data?.max||'';
+        if(src) media.push({type:'video', src, src2, poster:clip.preview||''});
       }
     }
     if(screensRes?.ok){
@@ -2024,18 +2026,21 @@ async function showSteamInfo(e, appId){
     }
     if(!media.length && d.background_image) media.push({type:'image', src:d.background_image});
 
-    // LV price from Steam (this endpoint does have CORS headers)
+    // LV price — fetch without filters param (more reliable CORS-wise)
     let lvPrice='';
     if(steamAppId){
       try {
-        const pr=await fetch(`https://store.steampowered.com/api/appdetails?appids=${steamAppId}&cc=lv&filters=price_overview`);
+        const pr=await fetch(`https://store.steampowered.com/api/appdetails?appids=${steamAppId}&cc=lv`);
         if(pr.ok){
           const pj=await pr.json();
           const app=pj[steamAppId];
-          if(app?.success && app?.data?.price_overview) lvPrice=app.data.price_overview.final_formatted;
-          else if(app?.success && app?.data && !app?.data?.price_overview) lvPrice='Free';
+          if(app?.success){
+            if(app.data?.price_overview) lvPrice=app.data.price_overview.final_formatted;
+            else if(app.data?.is_free===true) lvPrice='Free';
+            else if(!app.data?.price_overview) lvPrice='Free';
+          }
         }
-      } catch(pe){}
+      } catch(pe){ lvPrice=''; }
     }
 
     // Game metadata
@@ -2108,8 +2113,10 @@ function steamGalleryRender(idx){
   if(!slot) return;
   const m=media[idx];
   if(m.type==='video'){
-    slot.innerHTML=`<video class="steam-gallery-media" controls autoplay muted playsinline poster="${m.poster}">
+    slot.innerHTML=`<video class="steam-gallery-media" controls autoplay muted playsinline poster="${m.poster||''}"
+      onerror="this.closest('.steam-gallery').querySelector('.steam-gallery-media').style.display='none'">
       <source src="${m.src}" type="video/mp4">
+      ${m.src2&&m.src2!==m.src?`<source src="${m.src2}" type="video/mp4">`:''}
     </video>`;
   } else {
     slot.innerHTML=`<img class="steam-gallery-media" src="${m.src}" onerror="this.style.display='none'">`;
