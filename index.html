@@ -580,6 +580,24 @@
     .steam-modal-close { float: right; background: none; border: 1px solid var(--border2); color: var(--text-dim); padding: 4px 10px; font-size: 11px; cursor: pointer; border-radius: 2px; margin-top: 14px; }
     .steam-modal-close:hover { border-color: var(--gold); color: var(--gold); }
     .steam-loading { padding: 40px; text-align: center; color: var(--text-muted); font-style: italic; font-size: 13px; }
+    /* Gallery */
+    .steam-gallery { position: relative; width: 100%; height: 200px; background: #000; overflow: hidden; }
+    .steam-gallery-media { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .steam-gallery video { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .steam-gallery-nav {
+      position: absolute; top: 50%; transform: translateY(-50%);
+      background: rgba(0,0,0,0.6); border: 1px solid var(--border2); color: var(--cream);
+      padding: 6px 10px; font-size: 14px; cursor: pointer; border-radius: 2px; z-index: 2;
+      transition: background 0.15s;
+    }
+    .steam-gallery-nav:hover { background: rgba(201,162,39,0.3); border-color: var(--gold); }
+    .steam-gallery-prev { left: 8px; }
+    .steam-gallery-next { right: 8px; }
+    .steam-gallery-counter {
+      position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.6); color: var(--cream-dim); font-size: 10px;
+      padding: 2px 8px; border-radius: 10px; letter-spacing: 0.5px;
+    }
     @media(max-width:520px){
       .vote-arena { flex-direction: column; }
       .vote-vs { padding: 8px 0; }
@@ -700,7 +718,7 @@ const SUPABASE_URL = 'https://dyttrevzhxjmtdiynfpu.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR5dHRyZXZ6aHhqbXRkaXluZnB1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0NzQzNTgsImV4cCI6MjA5MTA1MDM1OH0.jfEEylD0LnXmitqy7lWDmL0TlGADaCvIW-yDhmuZHTg';
 const ADMIN_PASSWORD = 'suns123';
 // ← Paste your free RAWG API key here: rawg.io/apidocs
-const RAWG_KEY = 'd3fe2a5bf52143c6b07d038257b45b11';
+const RAWG_KEY = 'YOUR_RAWG_KEY';
 // ← Paste your GitHub image URL here (e.g. 'https://raw.githubusercontent.com/sleepelele/democracy_gaming/main/bg.jpg')
 const LOBBY_BG_URL = '';
 
@@ -1967,51 +1985,60 @@ async function showSteamInfo(e, appId){
   inner.innerHTML='<div class="steam-loading">Fetching game info...</div>';
   modal.classList.add('active');
   try {
-    // Fetch RAWG data + trailer + Steam LV price in parallel
-    const [rawgRes, trailerRes] = await Promise.all([
-      fetch(`https://api.rawg.io/api/games/${appId}?key=${RAWG_KEY}`),
-      fetch(`https://api.rawg.io/api/games/${appId}/movies?key=${RAWG_KEY}`).catch(()=>null)
+    // Fetch all 4 in parallel: game details, stores (for Steam URL), screenshots, trailers
+    const [rawgRes, storesRes, screensRes, moviesRes] = await Promise.all([
+      fetch(`https://api.rawg.io/api/games/${appId}?key=d3fe2a5bf52143c6b07d038257b45b11`),
+      fetch(`https://api.rawg.io/api/games/${appId}/stores?key=d3fe2a5bf52143c6b07d038257b45b11`).catch(()=>null),
+      fetch(`https://api.rawg.io/api/games/${appId}/screenshots?key=d3fe2a5bf52143c6b07d038257b45b11`).catch(()=>null),
+      fetch(`https://api.rawg.io/api/games/${appId}/movies?key=d3fe2a5bf52143c6b07d038257b45b11`).catch(()=>null),
     ]);
     if(!rawgRes.ok) throw new Error('bad response');
     const d=await rawgRes.json();
     if(!d||!d.name){ inner.innerHTML='<div class="steam-loading">Game data unavailable.</div><div style="text-align:right;padding:8px 16px;"><button class="steam-modal-close" onclick="closeSteamModal()">Close</button></div>'; return; }
 
-    // Trailer — first result from RAWG movies
-    let trailerHtml='';
-    if(trailerRes?.ok){
-      const td=await trailerRes.json();
-      const clip=(td.results||[])[0];
-      if(clip?.data?.max){
-        trailerHtml=`<video controls muted playsinline
-          style="width:100%;max-height:200px;background:#000;display:block;"
-          poster="${clip.preview||''}">
-          <source src="${clip.data.max}" type="video/mp4">
-          <source src="${clip.data['480']||clip.data.max}" type="video/mp4">
-        </video>`;
+    // Get Steam app ID from the /stores endpoint (has actual URLs unlike main endpoint)
+    let steamAppId=null, steamLink='';
+    if(storesRes?.ok){
+      const sd=await storesRes.json();
+      const steamEntry=(sd.results||[]).find(s=>s.store_id===1); // 1 = Steam
+      const url=steamEntry?.url||'';
+      steamAppId=url.match(/\/app\/(\d+)/)?.[1]||null;
+    }
+    steamLink=steamAppId
+      ? `https://store.steampowered.com/app/${steamAppId}/`
+      : `https://store.steampowered.com/search/?term=${encodeURIComponent(d.name)}`;
+
+    // Build media list: trailers first, then screenshots
+    const media=[];
+    if(moviesRes?.ok){
+      const md=await moviesRes.json();
+      for(const clip of (md.results||[]).slice(0,2)){
+        if(clip.data?.max) media.push({type:'video', src:clip.data.max, poster:clip.preview||''});
       }
     }
+    if(screensRes?.ok){
+      const sc=await screensRes.json();
+      for(const img of (sc.results||[]).slice(0,10)){
+        if(img.image) media.push({type:'image', src:img.image});
+      }
+    }
+    if(!media.length && d.background_image) media.push({type:'image', src:d.background_image});
 
-    // Steam app ID from RAWG stores list → fetch LV price
-    const steamStore=(d.stores||[]).find(s=>s.store?.slug==='steam');
-    const steamUrl=steamStore?.url||'';
-    const steamAppId=steamUrl.match(/\/app\/(\d+)/)?.[1]||null;
-    const steamLink=steamAppId?`https://store.steampowered.com/app/${steamAppId}/`:
-      `https://store.steampowered.com/search/?term=${encodeURIComponent(d.name)}`;
-
-    let lvPrice='N/A';
+    // LV price from Steam (this endpoint does have CORS headers)
+    let lvPrice='';
     if(steamAppId){
       try {
-        const priceRes=await fetch(`https://store.steampowered.com/api/appdetails?appids=${steamAppId}&cc=lv&filters=price_overview`);
-        if(priceRes.ok){
-          const pj=await priceRes.json();
-          const po=pj[steamAppId]?.data?.price_overview;
-          if(po) lvPrice=po.final_formatted;
-          else if(pj[steamAppId]?.data===null) lvPrice='Not available';
-          else lvPrice='Free';
+        const pr=await fetch(`https://store.steampowered.com/api/appdetails?appids=${steamAppId}&cc=lv&filters=price_overview`);
+        if(pr.ok){
+          const pj=await pr.json();
+          const app=pj[steamAppId];
+          if(app?.success && app?.data?.price_overview) lvPrice=app.data.price_overview.final_formatted;
+          else if(app?.success && app?.data && !app?.data?.price_overview) lvPrice='Free';
         }
-      } catch(pe){ lvPrice='—'; }
+      } catch(pe){}
     }
 
+    // Game metadata
     const metacritic=d.metacritic;
     const rating=d.rating?`★ ${d.rating.toFixed(1)} / 5`:'';
     const released=d.released||'Unknown';
@@ -2019,13 +2046,9 @@ async function showSteamInfo(e, appId){
     const devs=(d.developers||[]).map(x=>x.name).join(', ');
     const esrb=d.esrb_rating?.name||'';
     const rc=d.ratings_count||0;
-
-    // Multiplayer from tags
     const allTags=(d.tags||[]).map(t=>t.name);
     const mpKeywords=['multiplayer','co-op','online','local','pvp','mmo','battle royale','co-operative','split screen'];
     const mp=allTags.filter(t=>mpKeywords.some(k=>t.toLowerCase().includes(k))).slice(0,5);
-
-    // Review sentiment
     let reviewTag='', reviewCls='';
     if(rc>0){
       if(d.rating>=4.2){ reviewTag='Overwhelmingly Positive'; reviewCls='green'; }
@@ -2035,13 +2058,23 @@ async function showSteamInfo(e, appId){
       else if(d.rating>0){ reviewTag='Mostly Negative'; reviewCls='red'; }
     }
 
-    const hero=d.background_image||'';
+    // Store media as global for navigation
+    window._steamMedia=media;
+    window._steamMediaIdx=0;
+
     inner.innerHTML=`
-      ${trailerHtml||(!trailerHtml&&hero?`<img class="steam-modal-hero" src="${hero}" onerror="this.style.display='none'">`:'') }
+      <div class="steam-gallery" id="steam-gallery">
+        <div id="steam-media-slot"></div>
+        ${media.length>1?`
+          <button class="steam-gallery-nav steam-gallery-prev" onclick="steamGalleryNav(-1)">‹</button>
+          <button class="steam-gallery-nav steam-gallery-next" onclick="steamGalleryNav(1)">›</button>
+          <div class="steam-gallery-counter" id="steam-gallery-counter">1 / ${media.length}</div>
+        `:''}
+      </div>
       <div class="steam-modal-body">
         <div class="steam-modal-title">${esc(d.name)}</div>
         <div class="steam-modal-row">
-          <span class="steam-tag gold">🇱🇻 ${lvPrice}</span>
+          ${lvPrice?`<span class="steam-tag gold">🇱🇻 ${lvPrice}</span>`:''}
           ${rating?`<span class="steam-tag gold">${rating}</span>`:''}
           ${metacritic?`<span class="steam-tag ${metacritic>=75?'green':metacritic>=50?'gold':'red'}">Metacritic ${metacritic}</span>`:''}
           ${reviewTag?`<span class="steam-tag ${reviewCls}">${reviewTag}</span>`:''}
@@ -2059,10 +2092,34 @@ async function showSteamInfo(e, appId){
           <button class="steam-modal-close" onclick="closeSteamModal()">Close</button>
         </div>
       </div>`;
+    steamGalleryRender(0);
   } catch(err){
     inner.innerHTML=`<div class="steam-loading">Failed to load — check your connection.</div><div style="text-align:right;padding:8px 16px;"><button class="steam-modal-close" onclick="closeSteamModal()">Close</button></div>`;
   }
 }
+
+function steamGalleryRender(idx){
+  const media=window._steamMedia||[];
+  if(!media.length) return;
+  idx=((idx%media.length)+media.length)%media.length;
+  window._steamMediaIdx=idx;
+  const slot=document.getElementById('steam-media-slot');
+  const counter=document.getElementById('steam-gallery-counter');
+  if(!slot) return;
+  const m=media[idx];
+  if(m.type==='video'){
+    slot.innerHTML=`<video class="steam-gallery-media" controls autoplay muted playsinline poster="${m.poster}">
+      <source src="${m.src}" type="video/mp4">
+    </video>`;
+  } else {
+    slot.innerHTML=`<img class="steam-gallery-media" src="${m.src}" onerror="this.style.display='none'">`;
+  }
+  if(counter) counter.textContent=`${idx+1} / ${media.length}`;
+}
+function steamGalleryNav(dir){
+  steamGalleryRender((window._steamMediaIdx||0)+dir);
+}
+
 function closeSteamModal(){
   document.getElementById('steam-modal').classList.remove('active');
 }
