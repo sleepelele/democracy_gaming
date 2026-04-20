@@ -918,6 +918,7 @@ async function loadSession(){
   const {data}=await sb.from('game_sessions').select('*').order('created_at',{ascending:false}).limit(1);
   session=data&&data.length?data[0]:null;
   if(session){ await Promise.all([loadNominations(),loadMatchups(),loadJoinRequests()]); }
+  return session;
 }
 async function loadNominations(){
   const {data}=await sb.from('nominations').select('*').eq('session_id',session.id).order('created_at');
@@ -960,8 +961,20 @@ function setupRealtime(){
       await loadNominations();
       if(activeScreen==='screen-nominate') renderNomList();
     })
-    .on('postgres_changes',{event:'*',schema:'public',table:'game_sessions'},async()=>{
-      await loadSession();
+    .on('postgres_changes',{event:'*',schema:'public',table:'game_sessions'},async(payload)=>{
+      // If the session was deleted, clear everything and force re-login for all clients
+      if(payload.eventType==='DELETE'||!(await loadSession())){
+        session=null; nominations=[]; matchups=[]; joinRequests=[]; coinFlip=null;
+        nickname=''; localStorage.removeItem('nickname');
+        isAdmin=false;
+        document.getElementById('header-nick').textContent='';
+        document.getElementById('admin-gate').style.display='block';
+        document.getElementById('admin-panel').style.display='none';
+        document.getElementById('nav-tabs').classList.remove('show');
+        nav('screen-lobby'); renderLobby(); updateHeader();
+        toast('Session ended — enter your nickname to rejoin','ok');
+        return;
+      }
       updateHeader();
       if(activeScreen==='screen-vote') renderVoteScreen();
     })
@@ -1227,7 +1240,7 @@ async function adminLockAndGenerate(){
 function playVoteSound(){
   try {
     const audio=new Audio('vote.mp3');
-    audio.volume=0.15;
+    audio.volume=0.35;
     audio.play().catch(()=>{}); // silently ignore if file not found yet
   } catch(e){}
 }
@@ -1725,8 +1738,20 @@ function cardHtml(m,tpl){
       </div>`;
     }).join('');
 
-    const lockBtn=isPending?`<button class="btn btn-amber btn-sm" style="width:100%;margin-top:6px;"
-      onclick="castVote('${m.id}','${pendingVote.gameId}')">🔒 Lock In Vote</button>`:'';
+    const lockBtn=isPending?`
+      <div style="padding:8px 8px 4px;">
+        <button onclick="castVote('${m.id}','${pendingVote.gameId}')"
+          style="width:100%;padding:10px;font-size:13px;font-weight:700;
+            background:var(--gold);color:#0c0b09;border:none;border-radius:3px;
+            cursor:pointer;letter-spacing:0.5px;
+            animation:goldpulse 1s ease-in-out infinite;
+            font-family:var(--font-b);">
+          🔒 LOCK IN YOUR VOTE
+        </button>
+        <div style="text-align:center;font-size:10px;color:var(--text-muted);margin-top:4px;font-style:italic;">
+          Click again to change, then lock in
+        </div>
+      </div>`:'';
 
     voteHtml=`<div class="b-vote-area">
       ${rowsHtml}
