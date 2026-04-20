@@ -1227,7 +1227,7 @@ async function adminLockAndGenerate(){
 function playVoteSound(){
   try {
     const audio=new Audio('vote.mp3');
-    audio.volume=0.35;
+    audio.volume=0.15;
     audio.play().catch(()=>{}); // silently ignore if file not found yet
   } catch(e){}
 }
