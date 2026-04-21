@@ -5,64 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>🗳️ Democracy Gaming</title>
 
-  <!--
-  ══════════════════════════════════════════════════════════════════
-  SUPABASE SETUP — Run this SQL in your Supabase SQL Editor first:
-  ══════════════════════════════════════════════════════════════════
-
-  CREATE TABLE game_sessions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    phase TEXT NOT NULL DEFAULT 'nominating',
-    admin_password TEXT NOT NULL,
-    max_noms_per_person INTEGER DEFAULT 2,
-    winner_game_id UUID,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-  );
-
-  CREATE TABLE nominations (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    session_id UUID REFERENCES game_sessions(id) ON DELETE CASCADE,
-    game_name TEXT NOT NULL,
-    submitted_by TEXT NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-  );
-
-  CREATE TABLE matchups (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    session_id UUID REFERENCES game_sessions(id) ON DELETE CASCADE,
-    template_id TEXT NOT NULL,
-    bracket TEXT NOT NULL,
-    round INTEGER NOT NULL,
-    position INTEGER NOT NULL,
-    game1_id UUID REFERENCES nominations(id),
-    game2_id UUID REFERENCES nominations(id),
-    winner_id UUID REFERENCES nominations(id),
-    loser_id UUID REFERENCES nominations(id),
-    status TEXT DEFAULT 'pending',
-    created_at TIMESTAMPTZ DEFAULT NOW()
-  );
-
-  CREATE TABLE votes (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    matchup_id UUID REFERENCES matchups(id) ON DELETE CASCADE,
-    game_id UUID REFERENCES nominations(id),
-    device_token TEXT NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(matchup_id, device_token)
-  );
-
-  ALTER TABLE game_sessions DISABLE ROW LEVEL SECURITY;
-  ALTER TABLE nominations    DISABLE ROW LEVEL SECURITY;
-  ALTER TABLE matchups       DISABLE ROW LEVEL SECURITY;
-  ALTER TABLE votes          DISABLE ROW LEVEL SECURITY;
-
-  Then go to: Supabase Dashboard → Database → Replication
-  Enable replication for: game_sessions, nominations, matchups, votes
-  ══════════════════════════════════════════════════════════════════
-  -->
 
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
 
   <style>
     :root {
@@ -598,6 +544,50 @@
       background: rgba(0,0,0,0.6); color: var(--cream-dim); font-size: 10px;
       padding: 2px 8px; border-radius: 10px; letter-spacing: 0.5px;
     }
+
+    /* ── Countdown timer ── */
+    .vote-timer {
+      font-family: var(--font-h); font-size: 32px; font-style: italic;
+      color: var(--gold); letter-spacing: 2px; margin-bottom: 8px;
+    }
+    .vote-timer.urgent { color: var(--red); animation: ping .5s ease-in-out infinite; }
+    .b-timer { font-size: 10px; color: var(--gold); letter-spacing: 1px; text-align: center; padding: 3px; background: var(--gold-dim); }
+    .b-timer.urgent { color: var(--red); background: var(--red-dim); }
+
+    /* ── Presence dots ── */
+    .presence-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .presence-dot {
+      font-size: 11px; padding: 3px 10px; border-radius: 20px;
+      background: var(--surface2); border: 1px solid var(--border2); color: var(--text-dim);
+      display: flex; align-items: center; gap: 5px;
+    }
+    .presence-dot::before { content:''; width:6px; height:6px; border-radius:50%; background:var(--green); display:inline-block; flex-shrink:0; }
+    .presence-dot.admin-dot { border-color: var(--gold); color: var(--gold); }
+    .presence-dot.admin-dot::before { background: var(--gold); }
+
+    /* ── Session history ── */
+    .history-item {
+      padding: 12px 0; border-bottom: 1px solid var(--border);
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+    }
+    .history-winner { font-family: var(--font-h); font-size: 18px; font-style: italic; color: var(--cream); }
+    .history-meta { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+    .history-expand { font-size: 10px; color: var(--gold); cursor: pointer; flex-shrink: 0; padding-top: 4px; }
+    .history-expand:hover { text-decoration: underline; }
+    .history-detail {
+      display: none; padding: 8px 0 4px;
+      font-size: 11px; color: var(--text-dim); line-height: 1.7;
+    }
+    .history-detail.open { display: block; }
+
+    /* ── Player profiles ── */
+    .profile-card { padding: 10px 0; border-bottom: 1px solid var(--border); }
+    .profile-name { font-weight: 600; color: var(--cream); font-size: 13px; margin-bottom: 4px; }
+    .profile-stat { font-size: 11px; color: var(--text-dim); }
+
+    /* ── Admin timer input ── */
+    .timer-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+    .timer-row input { width: 70px; }
     @media(max-width:520px){
       .vote-arena { flex-direction: column; }
       .vote-vs { padding: 8px 0; }
@@ -798,6 +788,9 @@ let sb, session=null, nominations=[], matchups=[], activeVotes=[], activeScreen=
 let deviceToken='', nickname='', isAdmin=false, tieMatchupId=null;
 let coinFlip=null; // {matchupId, running, winnerId, loserId}
 let joinRequests=[], lateJoinApproved=false;
+let presenceList=[], sessionHistory=[];
+let voteTimerInterval=null;
+let presenceHeartbeat=null;
 
 // ══════════════════════════════════════════════════════════════════
 // ▌ UTILS
@@ -917,7 +910,7 @@ async function confirmFlipResult(){
 async function loadSession(){
   const {data}=await sb.from('game_sessions').select('*').order('created_at',{ascending:false}).limit(1);
   session=data&&data.length?data[0]:null;
-  if(session){ await Promise.all([loadNominations(),loadMatchups(),loadJoinRequests()]); }
+  if(session){ await Promise.all([loadNominations(),loadMatchups(),loadJoinRequests(),loadPresence()]); }
   return session;
 }
 async function loadNominations(){
@@ -950,6 +943,50 @@ async function loadJoinRequests(){
       nav('screen-vote');
     }
   } catch(e){ joinRequests=[]; }
+}
+
+async function loadPresence(){
+  if(!session) return;
+  try {
+    const {data}=await sb.from('presence').select('*').eq('session_id',session.id).order('nickname');
+    presenceList=data||[];
+  } catch(e){ presenceList=[]; }
+}
+async function loadSessionHistory(){
+  try {
+    const {data}=await sb.from('session_history').select('*').order('played_at',{ascending:false}).limit(10);
+    sessionHistory=data||[];
+  } catch(e){ sessionHistory=[]; }
+}
+async function upsertPresence(){
+  if(!session||!nickname) return;
+  try {
+    await sb.from('presence').upsert({
+      session_id:session.id, nickname, device_token:deviceToken, last_seen:new Date().toISOString()
+    },{onConflict:'session_id,device_token'});
+  } catch(e){}
+}
+async function removePresence(){
+  if(!session||!deviceToken) return;
+  try { await sb.from('presence').delete().eq('session_id',session.id).eq('device_token',deviceToken); } catch(e){}
+}
+function startPresenceHeartbeat(){
+  if(presenceHeartbeat) clearInterval(presenceHeartbeat);
+  upsertPresence();
+  presenceHeartbeat=setInterval(upsertPresence, 15000);
+}
+function stopPresenceHeartbeat(){
+  if(presenceHeartbeat){ clearInterval(presenceHeartbeat); presenceHeartbeat=null; }
+}
+async function saveSessionToHistory(winnerName){
+  try {
+    await sb.from('session_history').insert({
+      winner_game: winnerName,
+      player_count: presenceList.length,
+      nominations_snapshot: JSON.stringify(nominations.map(n=>({name:n.game_name,by:n.submitted_by}))),
+      bracket_snapshot: JSON.stringify(matchups.map(m=>({tpl:m.template_id,status:m.status,w:nominations.find(n=>n.id===m.winner_id)?.game_name||null})))
+    });
+  } catch(e){}
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1011,6 +1048,26 @@ function setupRealtime(){
         if(activeScreen==='screen-admin') renderAdminContent();
         if(activeScreen==='screen-lobby') renderLobby();
       } catch(e){}
+    })
+    .on('postgres_changes',{event:'*',schema:'public',table:'presence'},async()=>{
+      await loadPresence();
+      if(activeScreen==='screen-admin') renderAdminContent();
+    })
+    .on('postgres_changes',{event:'*',schema:'public',table:'session_history'},async()=>{
+      await loadSessionHistory();
+      if(activeScreen==='screen-admin') renderAdminContent();
+    })
+    .on('postgres_changes',{event:'DELETE',schema:'public',table:'game_sessions'},()=>{
+      // Admin reset — kick all connected users
+      if(!isAdmin){
+        stopPresenceHeartbeat();
+        session=null; nominations=[]; matchups=[]; joinRequests=[];
+        nickname=''; localStorage.removeItem('nickname');
+        document.getElementById('header-nick').textContent='';
+        document.getElementById('nav-tabs').classList.remove('show');
+        nav('screen-lobby'); renderLobby(); updateHeader();
+        toast('Session ended by admin','');
+      }
     })
     .subscribe();
 }
@@ -1143,6 +1200,9 @@ async function completeMatch(matchupId, winnerId, loserId){
   // Check if this is the GF → tournament over
   if(m.template_id==='GF-P1'){
     await sb.from('game_sessions').update({phase:'complete',winner_game_id:winnerId}).eq('id',session.id);
+    const winnerName=nominations.find(n=>n.id===winnerId)?.game_name||'Champion';
+    await saveSessionToHistory(winnerName);
+    fireConfetti();
   }
   // Cascade any single-byes that result
   await loadMatchups();
@@ -1237,6 +1297,18 @@ async function adminLockAndGenerate(){
   const ok=await generateBracket();
   if(ok){ await loadSession(); renderAdminContent(); nav('screen-bracket'); }
 }
+// ══════════════════════════════════════════════════════════════════
+// ▌ BROWSER NOTIFICATIONS
+// ══════════════════════════════════════════════════════════════════
+async function requestNotifPermission(){
+  if(!('Notification' in window)) return;
+  await Notification.requestPermission();
+}
+function sendNotif(title, body){
+  if(Notification.permission!=='granted') return;
+  try { new Notification(title,{body,icon:'https://sleepelele.github.io/democracy_gaming/favicon.ico'}); } catch(e){}
+}
+
 function playVoteSound(){
   try {
     const audio=new Audio('vote.mp3');
@@ -1245,11 +1317,14 @@ function playVoteSound(){
   } catch(e){}
 }
 
-async function adminStartVoting(matchupId){
+async function adminStartVoting(matchupId, durationSecs){
   if(activeMatchup()){ toast('Finish the current match first','err'); return; }
   coinFlip=null;
-  await sb.from('matchups').update({status:'voting'}).eq('id',matchupId);
+  const dur=parseInt(durationSecs)||0;
+  const vote_ends_at=dur>0 ? new Date(Date.now()+dur*1000).toISOString() : null;
+  await sb.from('matchups').update({status:'voting', vote_ends_at}).eq('id',matchupId);
   await loadActiveVotes();
+  playVoteSound();
   nav('screen-bracket');
   toast('Voting started!','ok');
 }
@@ -1425,6 +1500,7 @@ function enterNick(){
   nickname=n; localStorage.setItem('nickname',n);
   document.getElementById('header-nick').textContent=`👤 ${n}`;
   document.getElementById('nav-tabs').classList.add('show');
+  startPresenceHeartbeat();
   renderLobby();
 }
 async function requestLateJoin(){
@@ -1756,6 +1832,14 @@ function cardHtml(m,tpl){
     voteHtml=`<div class="b-vote-area">
       ${rowsHtml}
       ${lockBtn}
+      ${(()=>{
+        const m2=matchups.find(x=>x.id===m.id);
+        if(m2?.vote_ends_at&&isVoting){
+          const secsLeft=Math.max(0,Math.round((new Date(m2.vote_ends_at)-Date.now())/1000));
+          const urgent=secsLeft<=10;
+          return `<div class="b-timer${urgent?' urgent':''}">${urgent?'⚠ ':''} ${secsLeft}s remaining</div>`;
+        } return '';
+      })()}
       <div class="b-vote-footer">
         <span>${mv?'Vote cast':isPending?'Confirm your pick below':'Click a game to pick'}</span>
         <span>${totalVotes} vote${totalVotes!==1?'s':''} cast</span>
@@ -1781,7 +1865,12 @@ function cardHtml(m,tpl){
   const canComplete=isAdmin&&m.status==='revealing';
   const adminHtml=(canStart||canReveal||canComplete)?`
     <div class="b-actions">
-      ${canStart?`<button class="btn btn-cyan btn-sm" onclick="adminStartVoting('${m.id}')">▶ Start</button>`:''}
+      ${canStart?`
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <button class="btn btn-cyan btn-sm" onclick="adminStartVoting('${m.id}',document.getElementById('timer-dur-${m.id}')?.value||0)">▶ Start</button>
+          <input type="number" id="timer-dur-${m.id}" placeholder="secs (0=∞)" min="0" max="300"
+            style="width:90px;padding:4px 8px;font-size:11px;background:var(--surface3);border:1px solid var(--border2);border-radius:var(--r);color:var(--text);" value="60">
+        </div>`:''}
       ${canReveal?`<button class="btn btn-amber btn-sm" onclick="adminReveal('${m.id}')">👁 Reveal</button>`:''}
       ${canComplete&&!isTie?`<button class="btn btn-green btn-sm" onclick="adminComplete('${m.id}')">✓ Complete</button>`:''}
       ${isTie?`<div style="width:100%;font-size:10px;color:var(--gold);margin-bottom:4px;">TIE — oracle decides</div>`:''}
@@ -1955,6 +2044,12 @@ function renderAdminContent(){
       <p style="font-size:13px;color:var(--text-dim);margin-bottom:12px;">${nominations.length} game${nominations.length!==1?'s':''} nominated. Need at least 4 to generate a bracket.</p>
       <button class="btn btn-cyan" onclick="adminLockAndGenerate()" ${nominations.length<4?'disabled':''}>🎲 Lock & Generate Bracket</button>
     </div>`:''}
+    ${session.phase==='nominating'?`
+    <div class="admin-sec">
+      <h3>CONNECTED NOW</h3>
+      ${presenceList.length?`<div class="presence-list">${presenceList.map(p=>`<span class="presence-dot${p.nickname===nickname?' admin-dot':''}">${esc(p.nickname)}</span>`).join('')}</div>`
+        :`<p style="color:var(--text-muted);font-size:13px;">Nobody connected yet.</p>`}
+    </div>`:''}
     ${session.phase!=='nominating'&&joinRequests.length?`
     <div class="admin-sec">
       <h3>JOIN REQUESTS</h3>
@@ -1977,6 +2072,41 @@ function renderAdminContent(){
       <p style="color:var(--text-dim);font-size:13px;">That's what you're playing tonight. Good choice.</p>
     </div>`:''}
     <div class="admin-sec">
+      <h3>PAST GAME NIGHTS</h3>
+      ${sessionHistory.length?sessionHistory.map((h,i)=>`
+        <div class="history-item">
+          <div>
+            <div class="history-winner">🏆 ${esc(h.winner_game||'Unknown')}</div>
+            <div class="history-meta">${new Date(h.played_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})} &bull; ${h.player_count||'?'} players</div>
+            ${(()=>{
+              try {
+                const noms=JSON.parse(h.nominations_snapshot||'[]');
+                return noms.length?`<div class="history-meta" style="margin-top:3px;">${noms.map(n=>esc(n.name)).join(' · ')}</div>`:'';
+              } catch(e){ return ''; }
+            })()}
+          </div>
+        </div>`).join(''):`<p style="color:var(--text-muted);font-size:13px;">No past sessions yet.</p>`}
+    </div>
+    <div class="admin-sec">
+      <h3>PLAYER STATS</h3>
+      ${(()=>{
+        const stats={};
+        nominations.forEach(n=>{ if(!stats[n.submitted_by]) stats[n.submitted_by]={noms:0,votes:0,wins:0}; stats[n.submitted_by].noms++; });
+        activeVotes.forEach(v=>{ const n=v.voter_name||'?'; if(!stats[n]) stats[n]={noms:0,votes:0,wins:0}; stats[n].votes++; });
+        // Count wins
+        matchups.filter(m=>m.status==='complete'&&m.winner_id).forEach(m=>{
+          const winner=nominations.find(n=>n.id===m.winner_id);
+          if(winner&&stats[winner.submitted_by]) stats[winner.submitted_by].wins++;
+        });
+        const entries=Object.entries(stats).sort((a,b)=>b[1].noms-a[1].noms);
+        if(!entries.length) return `<p style="color:var(--text-muted);font-size:13px;">No data yet.</p>`;
+        return entries.map(([name,s])=>`<div class="profile-card">
+          <div class="profile-name">${esc(name)}</div>
+          <div class="profile-stat">${s.noms} nomination${s.noms!==1?'s':''} · ${s.votes} vote${s.votes!==1?'s':''} · ${s.wins} match win${s.wins!==1?'s':''}</div>
+        </div>`).join('');
+      })()}
+    </div>
+    <div class="admin-sec">
       <h3>DANGER ZONE</h3>
       <button class="btn btn-red btn-sm" onclick="adminReset()">🗑 Reset Session</button>
     </div>
@@ -1995,12 +2125,15 @@ async function init(){
   sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
   if(LOBBY_BG_URL){ document.getElementById('lobby-bg').style.backgroundImage=`url('${LOBBY_BG_URL}')`; }
   await loadSession();
+  await loadSessionHistory();
   if(session) await loadActiveVotes();
   setupRealtime();
   updateHeader();
+  requestNotifPermission();
 
   if(session&&nickname){
     document.getElementById('nav-tabs').classList.add('show');
+    startPresenceHeartbeat();
     const a=activeMatchup();
     if(session.phase==='bracket'&&a) nav('screen-vote');
     else if(session.phase==='bracket'||session.phase==='complete') nav('screen-bracket');
