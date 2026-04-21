@@ -870,6 +870,26 @@ function matchupByTplId(tplId){ return matchups.find(m=>m.template_id===tplId); 
 function gameName(id){ const n=nominations.find(n=>n.id===id); return n?n.game_name:'TBD'; }
 function activeMatchup(){ return matchups.find(m=>m.status==='voting'||m.status==='revealing'||m.status==='flipping'); }
 let nominationsPollInterval = null;
+let voteTimerTickInterval = null;
+
+function startVoteTimerTick(){
+  stopVoteTimerTick();
+  voteTimerTickInterval = setInterval(()=>{
+    // Only update timer elements, no full re-render
+    const a=activeMatchup();
+    if(!a?.vote_ends_at||a.status!=='voting'){ stopVoteTimerTick(); return; }
+    document.querySelectorAll('.b-timer-el').forEach(el=>{
+      const secsLeft=Math.max(0,Math.round((new Date(a.vote_ends_at)-Date.now())/1000));
+      const urgent=secsLeft<=10;
+      el.textContent=(urgent?'⚠ ':'')+secsLeft+'s remaining';
+      el.className='b-timer b-timer-el'+(urgent?' urgent':'');
+      if(secsLeft===0){ stopVoteTimerTick(); adminReveal(a.id); }
+    });
+  }, 1000);
+}
+function stopVoteTimerTick(){
+  if(voteTimerTickInterval){ clearInterval(voteTimerTickInterval); voteTimerTickInterval=null; }
+}
 
 function startNominationsPolling(){
   stopNominationsPolling();
@@ -1085,9 +1105,13 @@ function setupRealtime(){
         startCoinFlip(a,g1,g2,a.winner_id); // winner pre-determined by admin
       }
       if(a&&a.status==='voting'&&activeScreen!=='screen-admin'&&activeScreen!=='screen-bracket'){
+        const g1n=nominations.find(n=>n.id===a.game1_id)?.game_name||'?';
+        const g2n=nominations.find(n=>n.id===a.game2_id)?.game_name||'?';
+        sendNotif('🗳️ Voting is live!',`${g1n} vs ${g2n} — cast your vote!`);
         nav('screen-bracket');
+        if(a.vote_ends_at) startVoteTimerTick();
       } else {
-        if(activeScreen==='screen-bracket') renderBracket();
+        if(activeScreen==='screen-bracket'){ renderBracket(); const a2=activeMatchup(); if(a2?.vote_ends_at&&a2.status==='voting') startVoteTimerTick(); else stopVoteTimerTick(); }
         if(activeScreen==='screen-vote') renderVoteScreen();
         if(activeScreen==='screen-admin') renderAdminContent();
       }
@@ -1383,7 +1407,6 @@ async function adminStartVoting(matchupId, durationSecs){
   const vote_ends_at=dur>0 ? new Date(Date.now()+dur*1000).toISOString() : null;
   await sb.from('matchups').update({status:'voting', vote_ends_at}).eq('id',matchupId);
   await loadActiveVotes();
-  playVoteSound();
   nav('screen-bracket');
   toast('Voting started!','ok');
 }
@@ -1469,7 +1492,7 @@ function nav(id){
   if(activeTab) activeTab.classList.add('active');
   if(id==='screen-nominate'){ renderNomScreen(); startNominationsPolling(); }
   else { stopNominationsPolling(); }
-  if(id==='screen-bracket')  renderBracket();
+  if(id==='screen-bracket'){ renderBracket(); const a=activeMatchup(); if(a?.vote_ends_at&&a.status==='voting') startVoteTimerTick(); else stopVoteTimerTick(); }
   if(id==='screen-vote')     renderVoteScreen();
   if(id==='screen-admin')    renderAdminContent();
 }
@@ -1896,7 +1919,7 @@ function cardHtml(m,tpl){
         if(m2?.vote_ends_at&&isVoting){
           const secsLeft=Math.max(0,Math.round((new Date(m2.vote_ends_at)-Date.now())/1000));
           const urgent=secsLeft<=10;
-          return `<div class="b-timer${urgent?' urgent':''}">${urgent?'⚠ ':''} ${secsLeft}s remaining</div>`;
+          return `<div class="b-timer b-timer-el${urgent?' urgent':''}">${urgent?'⚠ ':''} ${secsLeft}s remaining</div>`;
         } return '';
       })()}
       <div class="b-vote-footer">
