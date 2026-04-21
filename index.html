@@ -1098,6 +1098,9 @@ function setupRealtime(){
       const a=activeMatchup();
       // Play sound for ALL users when voting starts
       if(a&&a.status==='voting') playVoteSound();
+      // Grand Final reveal — confetti + final sound for everyone
+      const gf=matchups.find(m=>m.bracket==='grand_final');
+      if(gf?.status==='revealing') { fireConfetti(); playFinalSound(); }
       // Trigger coin flip overlay for ALL users when admin sets status to flipping
       if(a&&a.status==='flipping'&&!coinFlip?.matchupId){
         const g1=nominations.find(n=>n.id===a.game1_id);
@@ -1396,7 +1399,14 @@ function playVoteSound(){
   try {
     const audio=new Audio('vote.mp3');
     audio.volume=0.35;
-    audio.play().catch(()=>{}); // silently ignore if file not found yet
+    audio.play().catch(()=>{});
+  } catch(e){}
+}
+function playFinalSound(){
+  try {
+    const audio=new Audio('final.mp3');
+    audio.volume=0.7;
+    audio.play().catch(()=>{});
   } catch(e){}
 }
 
