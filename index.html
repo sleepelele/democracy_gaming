@@ -840,7 +840,7 @@ function buildTemplate(n) {
 // ══════════════════════════════════════════════════════════════════
 // ▌ STATE
 // ══════════════════════════════════════════════════════════════════
-let sb, session=null, nominations=[], matchups=[], activeVotes=[], activeScreen='screen-lobby';
+let sb, session=null, nominations=[], matchups=[], activeVotes=[], allVotes=[], activeScreen='screen-lobby';
 let deviceToken='', nickname='', isAdmin=false, tieMatchupId=null;
 let coinFlip=null; // {matchupId, running, winnerId, loserId}
 let joinRequests=[], lateJoinApproved=false;
@@ -907,6 +907,18 @@ function bracketLabel(tplId){
   if(tplId.startsWith('GF')) return 'Grand Final';
   const [b,r]=tplId.split('-'); const bn=b==='W'?'Winners':'Losers'; const rn=r.replace('R','Round ');
   return `${bn} ${rn}`;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ▌ CONFETTI
+// ══════════════════════════════════════════════════════════════════
+function fireConfetti(){
+  if(typeof confetti==='undefined') return;
+  const gold='#c9a227', cream='#f0e6c8', white='#ffffff';
+  const opts={particleCount:80,spread:70,colors:[gold,cream,white]};
+  confetti({...opts,origin:{x:0.3,y:0.7}});
+  setTimeout(()=>confetti({...opts,origin:{x:0.7,y:0.7}}),300);
+  setTimeout(()=>confetti({...opts,particleCount:140,spread:110,origin:{x:0.5,y:0.6}}),600);
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -996,12 +1008,21 @@ async function loadNominations(){
 async function loadMatchups(){
   const {data}=await sb.from('matchups').select('*').eq('session_id',session.id).order('round').order('position');
   matchups=data||[];
+  await loadAllVotes();
 }
 async function loadActiveVotes(){
   const a=activeMatchup();
   if(!a){ activeVotes=[]; return; }
   const {data}=await sb.from('votes').select('*').eq('matchup_id',a.id);
   activeVotes=data||[];
+}
+async function loadAllVotes(){
+  if(!session) return;
+  // Load votes for all matchups in this session (for historical display on bracket)
+  const mids=matchups.map(m=>m.id);
+  if(!mids.length){ allVotes=[]; return; }
+  const {data}=await sb.from('votes').select('*').in('matchup_id',mids);
+  allVotes=data||[];
 }
 async function loadJoinRequests(){
   if(!session) return;
@@ -1121,6 +1142,7 @@ function setupRealtime(){
     })
     .on('postgres_changes',{event:'*',schema:'public',table:'votes'},async()=>{
       await loadActiveVotes();
+      await loadAllVotes();
       if(activeScreen==='screen-bracket') renderBracket();
       if(activeScreen==='screen-vote') renderVoteScreen();
       if(activeScreen==='screen-admin') renderAdminContent();
@@ -1938,16 +1960,22 @@ function cardHtml(m,tpl){
       </div>
     </div>`;
   } else {
-    // Not voting — show game names with steam info button
+    // Completed/pending — show game names with steam button + voter names if done
+    const isDone=m.status==='complete'&&m.winner_id;
+    const av1=isDone?allVotes.filter(v=>v.matchup_id===m.id&&v.game_id===m.game1_id):[];
+    const av2=isDone?allVotes.filter(v=>v.matchup_id===m.id&&v.game_id===m.game2_id):[];
+    const showVoters=isDone&&(av1.length||av2.length);
     voteHtml=`
-      <div class="b-game ${g1?g1cls:'tbd'}" style="display:flex;align-items:center;justify-content:center;gap:5px;">
+      <div class="b-game ${g1?g1cls:'tbd'}" style="display:flex;align-items:center;justify-content:center;gap:5px;flex-wrap:wrap;">
         <span>${g1?esc(g1.game_name):'TBD'}</span>
         ${g1?.steam_app_id?`<span class='steam-btn' onclick='showSteamInfo(event,"${g1.steam_app_id}")'>ℹ</span>`:''}
+        ${showVoters&&av1.length?`<span style="font-size:9px;color:var(--text-muted);">${av1.map(v=>esc(v.voter_name||'?')).join(', ')}</span>`:''}
       </div>
       <div class="b-vs">VS</div>
-      <div class="b-game ${g2?g2cls:'tbd'}" style="display:flex;align-items:center;justify-content:center;gap:5px;">
+      <div class="b-game ${g2?g2cls:'tbd'}" style="display:flex;align-items:center;justify-content:center;gap:5px;flex-wrap:wrap;">
         <span>${g2?esc(g2.game_name):'TBD'}</span>
         ${g2?.steam_app_id?`<span class='steam-btn' onclick='showSteamInfo(event,"${g2.steam_app_id}")'>ℹ</span>`:''}
+        ${showVoters&&av2.length?`<span style="font-size:9px;color:var(--text-muted);">${av2.map(v=>esc(v.voter_name||'?')).join(', ')}</span>`:''}
       </div>`;
   }
 
