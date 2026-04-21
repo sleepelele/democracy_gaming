@@ -5,6 +5,61 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>🗳️ Democracy Gaming</title>
 
+  <!--
+  ══════════════════════════════════════════════════════════════════
+  SUPABASE SETUP — Run this SQL in your Supabase SQL Editor first:
+  ══════════════════════════════════════════════════════════════════
+
+  CREATE TABLE game_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    phase TEXT NOT NULL DEFAULT 'nominating',
+    admin_password TEXT NOT NULL,
+    max_noms_per_person INTEGER DEFAULT 2,
+    winner_game_id UUID,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
+  CREATE TABLE nominations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID REFERENCES game_sessions(id) ON DELETE CASCADE,
+    game_name TEXT NOT NULL,
+    submitted_by TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
+  CREATE TABLE matchups (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID REFERENCES game_sessions(id) ON DELETE CASCADE,
+    template_id TEXT NOT NULL,
+    bracket TEXT NOT NULL,
+    round INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    game1_id UUID REFERENCES nominations(id),
+    game2_id UUID REFERENCES nominations(id),
+    winner_id UUID REFERENCES nominations(id),
+    loser_id UUID REFERENCES nominations(id),
+    status TEXT DEFAULT 'pending',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
+  CREATE TABLE votes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    matchup_id UUID REFERENCES matchups(id) ON DELETE CASCADE,
+    game_id UUID REFERENCES nominations(id),
+    device_token TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(matchup_id, device_token)
+  );
+
+  ALTER TABLE game_sessions DISABLE ROW LEVEL SECURITY;
+  ALTER TABLE nominations    DISABLE ROW LEVEL SECURITY;
+  ALTER TABLE matchups       DISABLE ROW LEVEL SECURITY;
+  ALTER TABLE votes          DISABLE ROW LEVEL SECURITY;
+
+  Then go to: Supabase Dashboard → Database → Replication
+  Enable replication for: game_sessions, nominations, matchups, votes
+  ══════════════════════════════════════════════════════════════════
+  -->
 
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -702,7 +757,8 @@
 // ══════════════════════════════════════════════════════════════════
 const SUPABASE_URL = 'https://dyttrevzhxjmtdiynfpu.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR5dHRyZXZ6aHhqbXRkaXluZnB1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0NzQzNTgsImV4cCI6MjA5MTA1MDM1OH0.jfEEylD0LnXmitqy7lWDmL0TlGADaCvIW-yDhmuZHTg';
-const ADMIN_PASSWORD = 'suns123';
+// Password is stored as SHA-256 hash — plaintext never appears in source
+const ADMIN_PASSWORD_HASH = '86cb94d282f75710e705aa3103055e860a33572bf7160168f37b5078c18e8af4';
 // ← Paste your free RAWG API key here: rawg.io/apidocs
 const RAWG_KEY = 'd3fe2a5bf52143c6b07d038257b45b11';
 // ← Paste your GitHub image URL here (e.g. 'https://raw.githubusercontent.com/sleepelele/democracy_gaming/main/bg.jpg')
@@ -1274,15 +1330,18 @@ function myVote(matchupId){ return activeVotes.find(v=>v.device_token===deviceTo
 // ══════════════════════════════════════════════════════════════════
 async function adminCreateSession(){
   const max=parseInt(document.getElementById('new-max').value)||2;
-  const {data,error}=await sb.from('game_sessions').insert({admin_password:ADMIN_PASSWORD,max_noms_per_person:max,phase:'nominating'}).select().single();
+  const {data,error}=await sb.from('game_sessions').insert({admin_password:ADMIN_PASSWORD_HASH,max_noms_per_person:max,phase:'nominating'}).select().single();
   if(error){ toast('Error: '+error.message,'err'); return; }
   session=data; nominations=[]; matchups=[];
   toast('Session created! Enter your nickname to continue.','ok');
   renderAdminContent(); updateHeader();
   if(!nickname){ nav('screen-lobby'); renderLobby(); }
 }
-function adminLogin(){
-  if(document.getElementById('admin-pw-input').value===ADMIN_PASSWORD){
+async function adminLogin(){
+  const input=document.getElementById('admin-pw-input').value;
+  const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(input));
+  const hash=Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+  if(hash===ADMIN_PASSWORD_HASH){
     isAdmin=true;
     document.getElementById('admin-gate').style.display='none';
     document.getElementById('admin-panel').style.display='block';
