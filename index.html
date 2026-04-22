@@ -5,61 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>🗳️ Democracy Gaming</title>
 
-  <!--
-  ══════════════════════════════════════════════════════════════════
-  SUPABASE SETUP — Run this SQL in your Supabase SQL Editor first:
-  ══════════════════════════════════════════════════════════════════
-
-  CREATE TABLE game_sessions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    phase TEXT NOT NULL DEFAULT 'nominating',
-    admin_password TEXT NOT NULL,
-    max_noms_per_person INTEGER DEFAULT 2,
-    winner_game_id UUID,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-  );
-
-  CREATE TABLE nominations (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    session_id UUID REFERENCES game_sessions(id) ON DELETE CASCADE,
-    game_name TEXT NOT NULL,
-    submitted_by TEXT NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-  );
-
-  CREATE TABLE matchups (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    session_id UUID REFERENCES game_sessions(id) ON DELETE CASCADE,
-    template_id TEXT NOT NULL,
-    bracket TEXT NOT NULL,
-    round INTEGER NOT NULL,
-    position INTEGER NOT NULL,
-    game1_id UUID REFERENCES nominations(id),
-    game2_id UUID REFERENCES nominations(id),
-    winner_id UUID REFERENCES nominations(id),
-    loser_id UUID REFERENCES nominations(id),
-    status TEXT DEFAULT 'pending',
-    created_at TIMESTAMPTZ DEFAULT NOW()
-  );
-
-  CREATE TABLE votes (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    matchup_id UUID REFERENCES matchups(id) ON DELETE CASCADE,
-    game_id UUID REFERENCES nominations(id),
-    device_token TEXT NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(matchup_id, device_token)
-  );
-
-  ALTER TABLE game_sessions DISABLE ROW LEVEL SECURITY;
-  ALTER TABLE nominations    DISABLE ROW LEVEL SECURITY;
-  ALTER TABLE matchups       DISABLE ROW LEVEL SECURITY;
-  ALTER TABLE votes          DISABLE ROW LEVEL SECURITY;
-
-  Then go to: Supabase Dashboard → Database → Replication
-  Enable replication for: game_sessions, nominations, matchups, votes
-  ══════════════════════════════════════════════════════════════════
-  -->
 
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
