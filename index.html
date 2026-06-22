@@ -1213,7 +1213,7 @@ async function cascadeByes(dbMap,tpl){
         if(feederTpl){
           const feederRow=dbMap[feederTpl.id];
           // Only auto-advance if feeder is a true double-bye (no winner at all = no real game was ever there)
-          if(feederRow?.status==='bye'&&!feederRow?.winner_id){
+          if((feederRow?.status==='bye'&&!feederRow?.winner_id)||(feederRow?.status==='complete'&&!feederRow?.loser_id&&(!feederRow?.game1_id||!feederRow?.game2_id))){
             const winnerId=hasG1?m.game1_id:m.game2_id;
             // Mark as complete but do NOT set _routed=false — stops cascade propagating further
             await sb.from('matchups').update({winner_id:winnerId,status:'complete'}).eq('id',m.id);
@@ -1276,7 +1276,7 @@ async function checkAndCascade(){
       const feederTpl=tpl.find(x=>(x.winTo===m.template_id&&x.winS===emptySlot)||(x.loseTo===m.template_id&&x.loseS===emptySlot));
       if(feederTpl){
         const feeder=matchups.find(x=>x.template_id===feederTpl.id);
-        if(feeder&&feeder.status==='bye'){
+        if(feeder&&(feeder.status==='bye'||(feeder.status==='complete'&&!feeder.loser_id&&(!feeder.game1_id||!feeder.game2_id)))){
           const winnerId=hasG1?m.game1_id:m.game2_id;
           await sb.from('matchups').update({winner_id:winnerId,status:'complete'}).eq('id',m.id);
           const t2=getTpl(m.template_id);
