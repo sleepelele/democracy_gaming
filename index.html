@@ -788,6 +788,7 @@ function buildTemplate(n) {
 let sb, session=null, nominations=[], matchups=[], activeVotes=[], allVotes=[], activeScreen='screen-lobby';
 let deviceToken='', nickname='', isAdmin=false, tieMatchupId=null;
 let coinFlip=null; // {matchupId, running, winnerId, loserId}
+let votingStartedAt=0; // timestamp when adminStartVoting last ran — guards against ghost-click reveal
 let joinRequests=[], lateJoinApproved=false;
 let presenceList=[], sessionHistory=[];
 let voteTimerInterval=null;
@@ -1385,6 +1386,7 @@ function playFinalSound(){
 async function adminStartVoting(matchupId, durationSecs){
   if(activeMatchup()){ toast('Finish the current match first','err'); return; }
   coinFlip=null;
+  votingStartedAt=Date.now(); // record time so ghost-click reveal is blocked for 3s
   const dur=parseInt(durationSecs)||0;
   const vote_ends_at=dur>0 ? new Date(Date.now()+dur*1000).toISOString() : null;
   await sb.from('matchups').update({status:'voting', vote_ends_at}).eq('id',matchupId);
@@ -1398,6 +1400,8 @@ async function adminStartVoting(matchupId, durationSecs){
   if(vote_ends_at) startVoteTimerTick();
 }
 async function adminReveal(matchupId){
+  // Guard: block ghost-clicks within 3 seconds of starting the vote
+  if(Date.now()-votingStartedAt < 3000){ toast('Hold on — let votes come in first!','err'); return; }
   // Guard: only reveal if the matchup is currently in 'voting' state
   const m=matchups.find(x=>x.id===matchupId);
   if(!m||m.status!=='voting'){ return; }
