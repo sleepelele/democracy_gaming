@@ -45,7 +45,7 @@
       font-family: var(--font-b);
       font-weight: 300;
       min-height: 100vh;
-      font-size: 19px;
+      font-size: 22px;
       line-height: 1.6;
     }
 
@@ -55,7 +55,7 @@
       cursor: pointer; font-family: var(--font-b); font-weight: 500;
       border-radius: var(--r); transition: all 0.2s; border: none;
     }
-    input { font-family: var(--font-b); font-size: 17px; font-weight: 300; }
+    input { font-family: var(--font-b); font-size: 19px; font-weight: 300; }
     a { color: var(--gold); }
 
     /* ── Ornament ── */
@@ -101,7 +101,7 @@
     #nav-tabs.show { display: flex; }
     .nav-tab {
       flex: 1; padding: 14px 8px; background: none; border: none;
-      font-family: var(--font-b); font-size: 12px; font-weight: 500;
+      font-family: var(--font-b); font-size: 14px; font-weight: 500;
       letter-spacing: 2.5px; text-transform: uppercase;
       color: var(--text-muted);
       border-bottom: 2px solid transparent; transition: all 0.2s;
@@ -136,7 +136,7 @@
       height: 1px; background: linear-gradient(to right, transparent, var(--border2), transparent);
     }
     label {
-      display: block; font-size: 12px; font-weight: 500;
+      display: block; font-size: 14px; font-weight: 500;
       text-transform: uppercase; letter-spacing: 2px;
       color: var(--text-dim); margin-bottom: 7px;
     }
@@ -224,9 +224,9 @@
     .bracket-wrap { padding: 0 22px 40px; min-width: max-content; }
     .bracket-section { margin-bottom: 30px; }
     .b-section-label {
-      font-family: var(--font-b); font-size: 12px; font-weight: 500;
+      font-family: var(--font-b); font-size: 14px; font-weight: 500;
       letter-spacing: 3px; text-transform: uppercase;
-      padding: 6px 16px; margin-bottom: 12px;
+      padding: 7px 18px; margin-bottom: 14px;
       display: inline-flex; align-items: center; gap: 8px;
       border: 1px solid var(--border2); border-radius: 2px; color: var(--text-dim);
     }
@@ -247,10 +247,10 @@
     .b-card-top {
       display: flex; align-items: center; justify-content: space-between;
       padding: 6px 11px; border-bottom: 1px solid var(--border);
-      font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 1.5px;
+      font-size: 13px; font-weight: 500; text-transform: uppercase; letter-spacing: 1.5px;
       color: var(--text-muted); background: var(--surface2);
     }
-    .st-pill { padding: 2px 9px; border-radius: 2px; font-size: 11px; font-weight: 500; letter-spacing: 1px; }
+    .st-pill { padding: 3px 10px; border-radius: 2px; font-size: 13px; font-weight: 500; letter-spacing: 1px; }
     .st-pill-pending    { background: var(--surface3); color: var(--text-muted); }
     .st-pill-voting     { background: var(--gold-dim); color: var(--gold); }
     .st-pill-revealing  { background: var(--green-dim); color: var(--green); }
@@ -262,7 +262,7 @@
     .b-game.won   { color: var(--gold); }
     .b-game.lost  { color: var(--cream-dim); text-decoration: line-through; text-decoration-color: var(--cream-dim); opacity: 0.75; }
     .b-vs {
-      padding: 3px 10px; text-align: center; font-size: 11px; font-weight: 500;
+      padding: 4px 10px; text-align: center; font-size: 13px; font-weight: 500;
       letter-spacing: 2px; text-transform: uppercase;
       color: var(--text-muted); background: var(--surface2);
       border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
@@ -287,7 +287,7 @@
     .b-vote-check { font-size: 14px; color: var(--gold); margin-left: 6px; flex-shrink: 0; font-weight: 600; }
     .b-vote-count { font-size: 16px; color: var(--gold); font-weight: 700; margin-left: 6px; flex-shrink: 0; min-width: 24px; text-align: right; }
     .b-vote-footer {
-      padding: 8px 12px; font-size: 13px; color: var(--cream-dim);
+      padding: 9px 14px; font-size: 15px; color: var(--cream-dim);
       font-weight: 500; letter-spacing: 0.5px; background: var(--surface2);
       border-top: 1px solid var(--border2);
       display: flex; align-items: center; justify-content: space-between;
@@ -322,7 +322,7 @@
     }
     .v-game-name { font-family: var(--font-h); font-size: 30px; font-style: italic; color: var(--cream); margin-bottom: 8px; }
     .v-vote-count { font-family: var(--font-h); font-size: 64px; font-weight: 900; color: var(--gold); margin: 4px 0 2px; line-height: 1; }
-    .v-vote-label { font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); }
+    .v-vote-label { font-size: 15px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); }
     .vote-vs {
       display: flex; align-items: center; padding: 0 16px;
       font-family: var(--font-h); font-size: 22px; font-style: italic;
@@ -336,13 +336,13 @@
     .pulse-row { display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--text-muted); font-size: 16px; font-style: italic; }
     .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--gold); animation: ping .9s ease-in-out infinite; }
     .tie-pick { margin-top: 14px; display: none; }
-    .tie-pick-label { font-size: 12px; color: var(--text-dim); margin-bottom: 8px; font-style: italic; }
+    .tie-pick-label { font-size: 15px; color: var(--text-dim); margin-bottom: 8px; font-style: italic; }
     .tie-pick-btns { display: flex; gap: 8px; justify-content: center; }
 
     /* Voter chips */
     .v-voters { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; }
     .v-voter-chip {
-      font-size: 13px; padding: 3px 11px; border-radius: 2px;
+      font-size: 15px; padding: 4px 12px; border-radius: 2px;
       background: var(--surface3); border: 1px solid var(--border2);
       color: var(--text-dim); letter-spacing: 0.5px;
     }
@@ -419,7 +419,7 @@
     #screen-admin h1 { font-family: var(--font-h); font-size: 34px; font-style: italic; color: var(--cream); margin-bottom: 22px; }
     .admin-sec { margin-bottom: 26px; }
     .admin-sec h3 {
-      font-size: 12px; font-weight: 500; letter-spacing: 3px; text-transform: uppercase;
+      font-size: 14px; font-weight: 500; letter-spacing: 3px; text-transform: uppercase;
       color: var(--text-dim); margin-bottom: 14px; padding-bottom: 9px;
       border-bottom: 1px solid var(--border);
     }
@@ -487,10 +487,10 @@
     /* ── Steam info button on bracket card ── */
     .steam-btn {
       display: inline-flex; align-items: center; gap: 3px;
-      font-size: 9px; font-weight: 600; letter-spacing: 0.5px;
+      font-size: 12px; font-weight: 600; letter-spacing: 0.5px;
       color: var(--gold); border: 1px solid var(--border2);
       background: var(--surface3); border-radius: 2px;
-      padding: 1px 6px; cursor: pointer; transition: all 0.15s;
+      padding: 2px 8px; cursor: pointer; transition: all 0.15s;
       vertical-align: middle; margin-left: 4px; flex-shrink: 0;
     }
     .steam-btn:hover { border-color: var(--gold); background: var(--gold-dim); }
@@ -514,8 +514,8 @@
     .steam-modal-title { font-family: var(--font-h); font-size: 26px; font-style: italic; color: var(--cream); margin-bottom: 12px; }
     .steam-modal-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
     .steam-tag {
-      font-size: 10px; font-weight: 500; letter-spacing: 0.5px;
-      padding: 3px 9px; border-radius: 2px;
+      font-size: 13px; font-weight: 500; letter-spacing: 0.5px;
+      padding: 4px 11px; border-radius: 2px;
       background: var(--surface2); border: 1px solid var(--border2); color: var(--text-dim);
     }
     .steam-tag.gold { border-color: var(--gold); color: var(--gold); background: var(--gold-dim); }
@@ -551,7 +551,7 @@
       color: var(--gold); letter-spacing: 2px; margin-bottom: 8px;
     }
     .vote-timer.urgent { color: var(--red); animation: ping .5s ease-in-out infinite; }
-    .b-timer { font-size: 13px; color: var(--gold); letter-spacing: 1px; text-align: center; padding: 5px; background: var(--gold-dim); }
+    .b-timer { font-size: 15px; color: var(--gold); letter-spacing: 1px; text-align: center; padding: 6px; background: var(--gold-dim); }
     .b-timer.urgent { color: var(--red); background: var(--red-dim); }
 
     /* ── Presence dots ── */
@@ -1955,7 +1955,7 @@ function cardHtml(m,tpl){
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
           <button class="btn btn-cyan btn-sm" onclick="adminStartVoting('${m.id}',document.getElementById('timer-dur-${m.id}')?.value||0)">▶ Start</button>
           <input type="number" id="timer-dur-${m.id}" placeholder="secs (0=∞)" min="0" max="300"
-            style="width:90px;padding:4px 8px;font-size:11px;background:var(--surface3);border:1px solid var(--border2);border-radius:var(--r);color:var(--text);" value="60">
+            style="width:90px;padding:6px 10px;font-size:14px;background:var(--surface3);border:1px solid var(--border2);border-radius:var(--r);color:var(--text);" value="30">
         </div>`:''}
       ${canReveal?`<button class="btn btn-amber btn-sm" onclick="adminReveal('${m.id}')">👁 Reveal</button>`:''}
       ${canComplete&&!isTie?`<button class="btn btn-green btn-sm" onclick="adminComplete('${m.id}')">✓ Complete</button>`:''}
