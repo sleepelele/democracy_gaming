@@ -35,6 +35,9 @@
       --font-h: 'Playfair Display', Georgia, serif;
       --font-b: 'Outfit', sans-serif;
       --r: 3px;
+      --cyan:      #3db8c6;
+      --cyan-dim:  rgba(61,184,198,0.15);
+      --purple:    #9b6fd4;
     }
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -346,6 +349,58 @@
       background: var(--surface3); border: 1px solid var(--border2);
       color: var(--text-dim); letter-spacing: 0.5px;
     }
+
+    /* ── Pitch overlay ── */
+    #pitch-overlay {
+      display: none; position: fixed; inset: 0; z-index: 500;
+      background: rgba(4,10,12,0.97);
+      flex-direction: column; align-items: center; justify-content: center;
+      text-align: center; padding: 24px;
+    }
+    #pitch-overlay.active { display: flex; }
+    #pitch-overlay.phase2 { background: rgba(10,8,4,0.97); }
+    .pitch-eyebrow {
+      font-size: 13px; font-weight: 500; letter-spacing: 5px; text-transform: uppercase;
+      color: var(--cyan); opacity: 0.8; margin-bottom: 8px;
+    }
+    #pitch-overlay.phase2 .pitch-eyebrow { color: var(--gold); }
+    .pitch-which {
+      font-size: 15px; color: var(--text-muted); letter-spacing: 2px;
+      text-transform: uppercase; margin-bottom: 24px;
+    }
+    .pitch-game-name {
+      font-family: var(--font-h);
+      font-size: clamp(30px, 6.5vw, 60px);
+      font-style: italic; color: var(--cream); line-height: 1.15;
+      margin-bottom: 12px; max-width: 700px;
+    }
+    .pitch-subtitle {
+      font-size: 16px; color: var(--text-dim); letter-spacing: 1px; margin-bottom: 36px;
+    }
+    .pitch-countdown {
+      font-family: var(--font-h); font-size: clamp(56px, 13vw, 108px);
+      color: var(--cyan); line-height: 1; margin-bottom: 28px;
+      font-variant-numeric: tabular-nums;
+    }
+    #pitch-overlay.phase2 .pitch-countdown { color: var(--gold); }
+    .pitch-progress {
+      width: 100%; max-width: 480px; height: 7px;
+      background: var(--surface3); border-radius: 4px; overflow: hidden;
+    }
+    .pitch-progress-bar {
+      height: 100%; width: 0%; background: var(--cyan); border-radius: 4px;
+      transition: width 0.22s linear;
+    }
+    #pitch-overlay.phase2 .pitch-progress-bar { background: var(--gold); }
+    .pitch-dots {
+      display: flex; gap: 8px; margin-top: 24px;
+    }
+    .pitch-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--surface3); border: 1px solid var(--border2);
+    }
+    .pitch-dot.done { background: var(--cyan); border-color: var(--cyan); }
+    .pitch-dot.active { background: var(--gold); border-color: var(--gold); animation: goldpulse 1s ease-in-out infinite; }
 
     /* ── Coin flip overlay ── */
     #flip-overlay {
@@ -681,6 +736,22 @@
 <!-- ── Toast ───────────────────────────────────────────────────── -->
 <div id="toast"></div>
 
+<!-- ── Pitch Timer Overlay ──────────────────────────────────────── -->
+<div id="pitch-overlay">
+  <div class="pitch-eyebrow">🎤 Pitch Time</div>
+  <div class="pitch-which" id="pitch-which">Game 1 of 2</div>
+  <div class="pitch-game-name" id="pitch-game-name">—</div>
+  <div class="pitch-subtitle">Make your case!</div>
+  <div class="pitch-countdown" id="pitch-countdown">30s</div>
+  <div class="pitch-progress">
+    <div class="pitch-progress-bar" id="pitch-progress-bar"></div>
+  </div>
+  <div class="pitch-dots">
+    <div class="pitch-dot" id="pitch-dot-1"></div>
+    <div class="pitch-dot" id="pitch-dot-2"></div>
+  </div>
+</div>
+
 <!-- ── Tie-Breaker Overlay ──────────────────────────────────────── -->
 <div id="flip-overlay">
   <div class="flip-eyebrow">The Market Cannot Decide</div>
@@ -792,6 +863,8 @@ let votingStartedAt=0; // timestamp when adminStartVoting last ran — guards ag
 let joinRequests=[], lateJoinApproved=false;
 let presenceList=[], sessionHistory=[];
 let voteTimerInterval=null;
+let pitchTimerInterval=null;
+let pitchVoteDuration=30; // vote duration (secs) queued after pitch phase ends
 let presenceHeartbeat=null;
 
 // ══════════════════════════════════════════════════════════════════
@@ -814,7 +887,7 @@ function getTemplate(){
 function getTpl(tplId){ const t=getTemplate(); return t?t.find(x=>x.id===tplId):null; }
 function matchupByTplId(tplId){ return matchups.find(m=>m.template_id===tplId); }
 function gameName(id){ const n=nominations.find(n=>n.id===id); return n?n.game_name:'TBD'; }
-function activeMatchup(){ return matchups.find(m=>m.status==='voting'||m.status==='revealing'||m.status==='flipping'); }
+function activeMatchup(){ return matchups.find(m=>m.status==='voting'||m.status==='revealing'||m.status==='flipping'||m.status==='pitching'); }
 let nominationsPollInterval = null;
 let voteTimerTickInterval = null;
 
@@ -1078,6 +1151,15 @@ function setupRealtime(){
         const g1=nominations.find(n=>n.id===a.game1_id);
         const g2=nominations.find(n=>n.id===a.game2_id);
         startCoinFlip(a,g1,g2,a.winner_id); // winner pre-determined by admin
+      }
+      // Trigger pitch overlay for ALL users when admin sets status to pitching
+      if(a&&a.status==='pitching'&&!pitchTimerInterval){
+        startPitchDisplay(a);
+      }
+      // Hide pitch overlay if matchup moved out of pitching (e.g. now voting)
+      if((!a||a.status!=='pitching')&&pitchTimerInterval){
+        stopPitchDisplay();
+        document.getElementById('pitch-overlay').classList.remove('active');
       }
       if(a&&a.status==='voting'&&activeScreen!=='screen-admin'&&activeScreen!=='screen-bracket'){
         const g1n=nominations.find(n=>n.id===a.game1_id)?.game_name||'?';
@@ -1383,8 +1465,90 @@ function playFinalSound(){
   } catch(e){}
 }
 
+// ── Semi-final detection ───────────────────────────────────────────
+function isSemiFinal(m){
+  if(!m||!m.template_id) return false;
+  const n=nominations.length; if(n<4) return false;
+  let size=4; while(size<n) size*=2;
+  const k=Math.log2(size);          // winners rounds total
+  const lbRounds=2*(k-1);           // losers rounds total
+  // Winners semi-final = last round before winners final (round k-1)
+  if(k>=2 && m.template_id.startsWith('W-R'+(k-1)+'-')) return true;
+  // Losers semi-final = last round before losers final (round lbRounds-1)
+  if(lbRounds>=2 && m.template_id.startsWith('L-R'+(lbRounds-1)+'-')) return true;
+  return false;
+}
+
+// ── Pitch phase functions ──────────────────────────────────────────
+async function adminStartWithPitch(matchupId, durationSecs){
+  const _ex=activeMatchup();
+  if(_ex){ toast('Finish the current match first','err'); return; }
+  coinFlip=null;
+  pitchVoteDuration=parseInt(durationSecs)||30;
+  const pitchEndsAt=new Date(Date.now()+60000).toISOString(); // 2×30s
+  await sb.from('matchups').update({status:'pitching',vote_ends_at:pitchEndsAt}).eq('id',matchupId);
+  const m=matchups.find(x=>x.id===matchupId);
+  if(m){ m.status='pitching'; m.vote_ends_at=pitchEndsAt; }
+  nav('screen-bracket');
+  toast('🎤 Pitch phase! 30 seconds per game','ok');
+  startPitchDisplay(m);
+}
+
+function startPitchDisplay(matchup){
+  stopPitchDisplay();
+  const g1=matchup.game1_id?nominations.find(n=>n.id===matchup.game1_id):null;
+  const g2=matchup.game2_id?nominations.find(n=>n.id===matchup.game2_id):null;
+  const g1Name=g1?.game_name||'Game 1';
+  const g2Name=g2?.game_name||'Game 2';
+  const overlay=document.getElementById('pitch-overlay');
+  overlay.classList.add('active');
+
+  function tick(){
+    const m=matchups.find(x=>x.id===matchup.id);
+    if(!m||m.status!=='pitching'){ stopPitchDisplay(); overlay.classList.remove('active'); return; }
+    const pitchEnd=new Date(m.vote_ends_at);
+    const pitchStart=new Date(pitchEnd-60000);
+    const elapsed=Date.now()-pitchStart;
+
+    if(elapsed>=60000){
+      // Pitch time over
+      stopPitchDisplay();
+      overlay.classList.remove('active');
+      if(isAdmin) adminStartVoting(m.id, pitchVoteDuration);
+      return;
+    }
+
+    const phase=elapsed<30000?0:1; // 0=game1, 1=game2
+    const phaseElapsed=phase===0?elapsed:elapsed-30000;
+    const secsLeft=Math.max(0,Math.ceil((30000-phaseElapsed)/1000));
+    const gameName=phase===0?g1Name:g2Name;
+
+    document.getElementById('pitch-game-name').textContent=gameName;
+    document.getElementById('pitch-countdown').textContent=secsLeft+'s';
+    document.getElementById('pitch-which').textContent='Game '+(phase+1)+' of 2';
+    document.getElementById('pitch-progress-bar').style.width=(phaseElapsed/300)+'%'; // /300 = /30000*100
+    overlay.className=phase===1?'active phase2':'active';
+    // dot indicators
+    const d1=document.getElementById('pitch-dot-1');
+    const d2=document.getElementById('pitch-dot-2');
+    if(phase===0){ d1.className='pitch-dot active'; d2.className='pitch-dot'; }
+    else { d1.className='pitch-dot done'; d2.className='pitch-dot active'; }
+  }
+
+  tick();
+  pitchTimerInterval=setInterval(tick, 200);
+}
+
+function stopPitchDisplay(){
+  if(pitchTimerInterval){ clearInterval(pitchTimerInterval); pitchTimerInterval=null; }
+}
+
 async function adminStartVoting(matchupId, durationSecs){
-  if(activeMatchup()){ toast('Finish the current match first','err'); return; }
+  const _existing=activeMatchup();
+  // Allow transitioning from pitch phase to voting for the same matchup
+  if(_existing && !(_existing.id===matchupId && _existing.status==='pitching')){
+    toast('Finish the current match first','err'); return;
+  }
   coinFlip=null;
   votingStartedAt=Date.now(); // record time so ghost-click reveal is blocked for 3s
   const dur=parseInt(durationSecs)||0;
@@ -1477,9 +1641,13 @@ async function adminReset(){
 // ▌ NAVIGATION
 // ══════════════════════════════════════════════════════════════════
 function nav(id){
-  // Non-admin users cannot navigate away while a coin flip is in progress
-  if(!isAdmin && activeMatchup()?.status==='flipping' && id!=='screen-vote'){
+  // Non-admin users cannot navigate away during a coin flip or pitch phase
+  const _aStatus=activeMatchup()?.status;
+  if(!isAdmin && _aStatus==='flipping' && id!=='screen-vote'){
     toast('The oracle is deciding — wait for the result!','err'); return;
+  }
+  if(!isAdmin && _aStatus==='pitching' && id!=='screen-vote'){
+    toast('Pitch is in progress — wait for voting to open!','err'); return;
   }
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
@@ -1849,8 +2017,8 @@ function renderBracket(){
 function cardHtml(m,tpl){
   const g1=m.game1_id?nominations.find(n=>n.id===m.game1_id):null;
   const g2=m.game2_id?nominations.find(n=>n.id===m.game2_id):null;
-  const pills={pending:'st-pill-pending',voting:'st-pill-voting',revealing:'st-pill-revealing',flipping:'st-pill-voting',complete:'st-pill-complete',bye:'st-pill-bye'};
-  const pillLabels={pending:'Pending',voting:'🔴 Voting',revealing:'👁 Revealed',flipping:'🪙 Oracle',complete:'✓ Done',bye:'Bye'};
+  const pills={pending:'st-pill-pending',voting:'st-pill-voting',revealing:'st-pill-revealing',flipping:'st-pill-voting',pitching:'st-pill-voting',complete:'st-pill-complete',bye:'st-pill-bye'};
+  const pillLabels={pending:'Pending',voting:'🔴 Voting',revealing:'👁 Revealed',flipping:'🪙 Oracle',pitching:'🎤 Pitch',complete:'✓ Done',bye:'Bye'};
   const isTie=tieMatchupId===m.id;
 
   // Determine game win/loss state for completed matches
@@ -1949,10 +2117,12 @@ function cardHtml(m,tpl){
   const canStart=isAdmin&&m.status==='pending'&&m.game1_id&&m.game2_id;
   const canReveal=isAdmin&&m.status==='voting';
   const canComplete=isAdmin&&m.status==='revealing';
+  const isSF=isSemiFinal(m); // semi-finals get a pitch button
   const adminHtml=(canStart||canReveal||canComplete)?`
     <div class="b-actions">
       ${canStart?`
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          ${isSF?`<button class="btn btn-sm" style="background:var(--purple);color:#fff;" onclick="adminStartWithPitch('${m.id}',document.getElementById('timer-dur-${m.id}')?.value||30)">🎤 Pitch + Vote</button>`:''}
           <button class="btn btn-cyan btn-sm" onclick="adminStartVoting('${m.id}',document.getElementById('timer-dur-${m.id}')?.value||0)">▶ Start</button>
           <input type="number" id="timer-dur-${m.id}" placeholder="secs (0=∞)" min="0" max="300"
             style="width:90px;padding:6px 10px;font-size:14px;background:var(--surface3);border:1px solid var(--border2);border-radius:var(--r);color:var(--text);" value="30">
