@@ -2117,7 +2117,7 @@ function cardHtml(m,tpl){
       {game:g1,gid:m.game1_id,gv:g1v,isWin:isRevealing&&g1v>g2v,isLose:isRevealing&&g2v>g1v},
       {game:g2,gid:m.game2_id,gv:g2v,isWin:isRevealing&&g2v>g1v,isLose:isRevealing&&g1v>g2v},
     ];
-    const showLive=session?.live_votes&&isVoting; // show counts live during voting
+    const showLive=isVoting; // always show counts + voters live during voting
     const rowsHtml=rows.map(({game,gid,gv,isWin,isLose})=>{
       const myPick=mv?.game_id===gid;
       const isPendingThis=isPending&&pendingVote?.gameId===gid;
@@ -2286,17 +2286,17 @@ function renderVoteScreen(){
            onclick="${!mv&&!revealing?`castVote('${a.id}','${a.game1_id}')`:''}" style="${!mv&&!revealing?'':'cursor:default'}">
         ${mv?.game_id===a.game1_id?'<span class="v-my-badge">YOUR VOTE</span>':''}
         <div class="v-game-name">${esc(g1?.game_name||'TBD')}</div>
-        ${(revealing||session?.live_votes)?`<div class="v-vote-count">${g1v}</div><div class="v-vote-label">vote${g1v!==1?'s':''}</div>${g1voters.length?`<div class="v-voters">${g1voters.map(n=>`<span class="v-voter-chip">${esc(n)}</span>`).join('')}</div>`:''}`:''}
+        ${(revealing||isVoting)?`<div class="v-vote-count">${g1v}</div><div class="v-vote-label">vote${g1v!==1?'s':''}</div>${g1voters.length?`<div class="v-voters">${g1voters.map(n=>`<span class="v-voter-chip">${esc(n)}</span>`).join('')}</div>`:''}`:''}
       </div>
       <div class="vote-vs">VS</div>
       <div class="vote-card ${g2cls} ${mv?'voted':''} ${revealing?'revealing':''}"
            onclick="${!mv&&!revealing?`castVote('${a.id}','${a.game2_id}')`:''}" style="${!mv&&!revealing?'':'cursor:default'}">
         ${mv?.game_id===a.game2_id?'<span class="v-my-badge">YOUR VOTE</span>':''}
         <div class="v-game-name">${esc(g2?.game_name||'TBD')}</div>
-        ${(revealing||session?.live_votes)?`<div class="v-vote-count">${g2v}</div><div class="v-vote-label">vote${g2v!==1?'s':''}</div>${g2voters.length?`<div class="v-voters">${g2voters.map(n=>`<span class="v-voter-chip">${esc(n)}</span>`).join('')}</div>`:''}`:''}
+        ${(revealing||isVoting)?`<div class="v-vote-count">${g2v}</div><div class="v-vote-label">vote${g2v!==1?'s':''}</div>${g2voters.length?`<div class="v-voters">${g2voters.map(n=>`<span class="v-voter-chip">${esc(n)}</span>`).join('')}</div>`:''}`:''}
       </div>
     </div>
-    ${(revealing||session?.live_votes)?`<div class="vote-bar"><div class="bg1" style="width:${barG1}%"></div><div class="bg2" style="width:${barG2}%"></div></div>`:''}
+    ${(revealing||isVoting)?`<div class="vote-bar"><div class="bg1" style="width:${barG1}%"></div><div class="bg2" style="width:${barG2}%"></div></div>`:''}
     <div class="vote-status">
       ${revealing
         ? isTie
@@ -2304,13 +2304,9 @@ function renderVoteScreen(){
             ? `🪙 The coin has spoken! <strong style="color:var(--green)">${esc(nominations.find(n=>n.id===coinFlip.winnerId)?.game_name||'?')}</strong> advances!`
             : `🪙 IT'S A TIE &mdash; COIN FLIP IN PROGRESS...`
           : `${total} vote${total!==1?'s':''} &mdash; ${g1v===g2v?'🤝 Tie!':'🏆 '+esc(g1v>g2v?(g1?.game_name||'?'):(g2?.game_name||'?'))+' wins the people\'s vote!'}`
-        : session?.live_votes
-          ? (mv
-              ? `<div class="pulse-row"><div class="dot"></div><span>Vote cast! <span style="color:var(--gold)">${total} vote${total!==1?'s':''} live</span></span></div>`
-              : `👆 Click a game to vote — <span style="color:var(--gold)">${total} vote${total!==1?'s':''} cast live</span>`)
-          : mv
-            ? `<div class="pulse-row"><div class="dot"></div><span>Vote cast! Waiting for the reveal...</span></div>`
-            : `👆 Click a game to cast your vote <span style="color:var(--text-muted)">(${total} cast so far)</span>`
+        : mv
+          ? `<div class="pulse-row"><div class="dot"></div><span>Vote cast! <span style="color:var(--gold)">${total} vote${total!==1?'s':''} live</span></span></div>`
+          : `👆 Click a game to vote — <span style="color:var(--gold)">${total} vote${total!==1?'s':''} cast live</span>`
       }
     </div>
     ${revealing&&isTie?`
