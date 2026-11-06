@@ -610,6 +610,8 @@
     .vote-timer.urgent { color: var(--red); animation: ping .5s ease-in-out infinite; }
     .b-timer { font-size: 15px; color: var(--gold); letter-spacing: 1px; text-align: center; padding: 6px; background: var(--gold-dim); }
     .b-timer.urgent { color: var(--red); background: var(--red-dim); }
+    .vs-timer { display:block; text-align:center; font-family:var(--font-h); font-style:italic; font-size:28px; color:var(--gold); letter-spacing:2px; margin:4px 0 12px; }
+    .vs-timer.urgent { color:var(--red); animation:ping .5s ease-in-out infinite; }
 
     /* ── Presence dots ── */
     .presence-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
@@ -776,7 +778,7 @@
 // ══════════════════════════════════════════════════════════════════
 // ▌ CONFIG
 // ══════════════════════════════════════════════════════════════════
-const APP_VERSION = 'v1.5';
+const APP_VERSION = 'v1.6';
 const SUPABASE_URL = 'https://dyttrevzhxjmtdiynfpu.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR5dHRyZXZ6aHhqbXRkaXluZnB1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0NzQzNTgsImV4cCI6MjA5MTA1MDM1OH0.jfEEylD0LnXmitqy7lWDmL0TlGADaCvIW-yDhmuZHTg';
 // Password is stored as SHA-256 hash — plaintext never appears in source
@@ -896,6 +898,7 @@ function matchupByTplId(tplId){ return matchups.find(m=>m.template_id===tplId); 
 function gameName(id){ const n=nominations.find(n=>n.id===id); return n?n.game_name:'TBD'; }
 function activeMatchup(){ return matchups.find(m=>m.status==='voting'||m.status==='revealing'||m.status==='flipping'||m.status==='pitching'); }
 let nominationsPollInterval = null;
+let adminPanelTab = 'session'; // 'session' | 'history'
 let voteTimerTickInterval = null;
 
 function startVoteTimerTick(){
@@ -909,11 +912,16 @@ function startVoteTimerTick(){
     // Guard: never auto-reveal within the first 5 seconds (prevents race-condition false fires)
     if(Date.now() - timerStartedAt < 5000) return;
     const secsLeft=Math.max(0,Math.round(msLeft/1000));
+    const urgent=secsLeft<=10;
     document.querySelectorAll('.b-timer-el').forEach(el=>{
-      const urgent=secsLeft<=10;
       el.textContent=(urgent?'⚠ ':'')+secsLeft+'s remaining';
       el.className='b-timer b-timer-el'+(urgent?' urgent':'');
     });
+    const vsTimer=document.getElementById('vote-screen-timer');
+    if(vsTimer){
+      vsTimer.textContent=(urgent?'⚠ ':'')+secsLeft+'s';
+      vsTimer.className='vs-timer'+(urgent?' urgent':'');
+    }
     // Only admin auto-reveals on timer expiry, and only when timer has actually elapsed
     if(secsLeft===0 && msLeft <= 0 && isAdmin){ stopVoteTimerTick(); adminReveal(a.id); }
   }, 1000);
@@ -1701,7 +1709,12 @@ function nav(id){
   if(id==='screen-nominate'){ renderNomScreen(); startNominationsPolling(); }
   else { stopNominationsPolling(); }
   if(id==='screen-bracket'){ renderBracket(); const a=activeMatchup(); if(a?.vote_ends_at&&a.status==='voting') startVoteTimerTick(); else stopVoteTimerTick(); }
-  if(id==='screen-vote')     renderVoteScreen();
+  if(id==='screen-vote'){
+    // If no active matchup, don't strand the user — send to bracket
+    if(session&&!activeMatchup()&&!isAdmin){ nav('screen-bracket'); return; }
+    renderVoteScreen();
+    const av=activeMatchup(); if(av?.status==='voting'&&av.vote_ends_at) startVoteTimerTick();
+  }
   if(id==='screen-admin')    renderAdminContent();
 }
 function toggleAdmin(){ nav(activeScreen==='screen-admin'?(session?'screen-nominate':'screen-lobby'):'screen-admin'); }
@@ -2103,7 +2116,7 @@ function cardHtml(m,tpl){
         ${myPick?`<span class="b-vote-check">✓ you</span>`:''}
         ${isPendingThis?`<span class="b-vote-check">← selected</span>`:''}
         ${(isRevealing||showLive)?`<span class="b-vote-count">${gv}</span>`:''}
-        ${liveVotersForRow.length?`<span style="font-size:11px;color:var(--gold);margin-left:4px;">${liveVotersForRow.join(', ')}</span>`:''}
+        ${liveVotersForRow.length?(()=>{const shown=liveVotersForRow.slice(0,2);const extra=liveVotersForRow.length-2;return `<span style="font-size:11px;color:var(--gold);margin-left:4px;">${shown.join(', ')}${extra>0?' +'+extra:''}</span>`;})():''}
       </div>`;
     }).join('');
 
@@ -2250,9 +2263,20 @@ function renderVoteScreen(){
   const g1voters=activeVotes.filter(v=>v.game_id===a.game1_id).map(v=>v.voter_name||'?');
   const g2voters=activeVotes.filter(v=>v.game_id===a.game2_id).map(v=>v.voter_name||'?');
 
+  // Compute initial timer display for vote screen
+  const vsTimerHtml=(()=>{
+    if(!isVoting||!a.vote_ends_at) return '';
+    const msLeft=new Date(a.vote_ends_at)-Date.now();
+    const secsLeft=Math.max(0,Math.round(msLeft/1000));
+    const urgent=secsLeft<=10;
+    const display=secsLeft===0&&msLeft>-2000?'...':(urgent?'⚠ ':'')+secsLeft+'s';
+    return `<div id="vote-screen-timer" class="vs-timer${urgent?' urgent':''}">${display}</div>`;
+  })();
+
   el.innerHTML=`
     <div class="vote-label">CURRENT MATCH</div>
     <div class="vote-round-name">${esc(bracketLabel(a.template_id))}</div>
+    ${vsTimerHtml}
     <div class="vote-arena">
       <div class="vote-card ${g1cls} ${mv?'voted':''} ${revealing?'revealing':''}"
            onclick="${!mv&&!revealing?`castVote('${a.id}','${a.game1_id}')`:''}" style="${!mv&&!revealing?'':'cursor:default'}">
@@ -2277,8 +2301,8 @@ function renderVoteScreen(){
             : `🪙 IT'S A TIE &mdash; COIN FLIP IN PROGRESS...`
           : `${total} vote${total!==1?'s':''} &mdash; ${g1v===g2v?'🤝 Tie!':'🏆 '+esc(g1v>g2v?(g1?.game_name||'?'):(g2?.game_name||'?'))+' wins the people\'s vote!'}`
         : mv
-          ? `<div class="pulse-row"><div class="dot"></div><span>Vote cast! <span style="color:var(--gold)">${total} vote${total!==1?'s':''} live</span></span></div>`
-          : `👆 Click a game to vote — <span style="color:var(--gold)">${total} vote${total!==1?'s':''} cast live</span>`
+          ? `<div class="pulse-row"><div class="dot"></div><span style="color:var(--gold);font-weight:700;">Vote locked in!</span>&nbsp;<span style="color:var(--text-dim);">${total} vote${total!==1?'s':''} cast — waiting for reveal</span></div>`
+          : `👆 Click a game to vote — <span style="color:var(--gold)">${total} vote${total!==1?'s':''} cast so far</span>`
       }
     </div>
     ${revealing&&isTie?`
@@ -2295,6 +2319,10 @@ function renderVoteScreen(){
       ${a.status==='revealing'&&isTie&&flipDone?`<button class="btn btn-green" onclick="adminComplete('${a.id}')">✓ Accept Coin Flip Result</button>`:''}
     </div>
     `:''}
+    ${!isAdmin&&revealing&&flipDone?`
+    <div style="text-align:center;margin-top:20px;">
+      <button class="btn btn-ghost" onclick="nav('screen-bracket')" style="font-size:13px;letter-spacing:1px;">← Back to Bracket</button>
+    </div>`:''}
   `;
 }
 
@@ -2316,6 +2344,38 @@ function renderAdminContent(){
 
   const a=activeMatchup();
   el.innerHTML=`
+    <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:1px solid var(--border2);">
+      <button onclick="adminPanelTab='session';renderAdminContent()" style="flex:1;padding:10px;background:${adminPanelTab==='session'?'var(--surface2)':'transparent'};border:none;border-bottom:${adminPanelTab==='session'?'2px solid var(--gold)':'2px solid transparent'};color:${adminPanelTab==='session'?'var(--gold)':'var(--text-dim)'};font-family:var(--font-b);font-size:12px;letter-spacing:2px;cursor:pointer;text-transform:uppercase;">Session</button>
+      <button onclick="adminPanelTab='history';renderAdminContent()" style="flex:1;padding:10px;background:${adminPanelTab==='history'?'var(--surface2)':'transparent'};border:none;border-bottom:${adminPanelTab==='history'?'2px solid var(--gold)':'2px solid transparent'};color:${adminPanelTab==='history'?'var(--gold)':'var(--text-dim)'};font-family:var(--font-b);font-size:12px;letter-spacing:2px;cursor:pointer;text-transform:uppercase;">History</button>
+    </div>
+    ${adminPanelTab==='history'?`
+    <div class="admin-sec">
+      <h3>PAST GAME NIGHTS</h3>
+      ${sessionHistory.length?sessionHistory.map((h,i)=>`
+        <div class="history-item">
+          <div>
+            <div class="history-winner">🏆 ${esc(h.winner_game||'Unknown')}</div>
+            <div class="history-meta">${new Date(h.played_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})} &bull; ${h.player_count||'?'} players</div>
+            ${(()=>{ try { const noms=JSON.parse(h.nominations_snapshot||'[]'); return noms.length?`<div class="history-meta" style="margin-top:3px;">${noms.map(n=>esc(n.name)).join(' · ')}</div>`:''; } catch(e){ return ''; } })()}
+          </div>
+        </div>`).join(''):`<p style="color:var(--text-muted);font-size:13px;">No past sessions yet.</p>`}
+    </div>
+    <div class="admin-sec">
+      <h3>PLAYER STATS</h3>
+      ${(()=>{
+        const stats={};
+        nominations.forEach(n=>{ if(!stats[n.submitted_by]) stats[n.submitted_by]={noms:0,votes:0,wins:0}; stats[n.submitted_by].noms++; });
+        activeVotes.forEach(v=>{ const n=v.voter_name||'?'; if(!stats[n]) stats[n]={noms:0,votes:0,wins:0}; stats[n].votes++; });
+        matchups.filter(m=>m.status==='complete'&&m.winner_id).forEach(m=>{ const winner=nominations.find(n=>n.id===m.winner_id); if(winner&&stats[winner.submitted_by]) stats[winner.submitted_by].wins++; });
+        const entries=Object.entries(stats).sort((a,b)=>b[1].noms-a[1].noms);
+        if(!entries.length) return `<p style="color:var(--text-muted);font-size:13px;">No data yet.</p>`;
+        return entries.map(([name,s])=>`<div class="profile-card">
+          <div class="profile-name">${esc(name)}</div>
+          <div class="profile-stat">${s.noms} nomination${s.noms!==1?'s':''} · ${s.votes} vote${s.votes!==1?'s':''} · ${s.wins} match win${s.wins!==1?'s':''}</div>
+        </div>`).join('');
+      })()}
+    </div>`:''}
+    ${adminPanelTab==='session'?`
     <div class="admin-sec">
       <h3>SESSION INFO</h3>
       <div class="info-grid">
@@ -2382,44 +2442,9 @@ function renderAdminContent(){
       <p style="color:var(--text-dim);font-size:13px;">That's what you're playing tonight. Good choice.</p>
     </div>`:''}
     <div class="admin-sec">
-      <h3>PAST GAME NIGHTS</h3>
-      ${sessionHistory.length?sessionHistory.map((h,i)=>`
-        <div class="history-item">
-          <div>
-            <div class="history-winner">🏆 ${esc(h.winner_game||'Unknown')}</div>
-            <div class="history-meta">${new Date(h.played_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})} &bull; ${h.player_count||'?'} players</div>
-            ${(()=>{
-              try {
-                const noms=JSON.parse(h.nominations_snapshot||'[]');
-                return noms.length?`<div class="history-meta" style="margin-top:3px;">${noms.map(n=>esc(n.name)).join(' · ')}</div>`:'';
-              } catch(e){ return ''; }
-            })()}
-          </div>
-        </div>`).join(''):`<p style="color:var(--text-muted);font-size:13px;">No past sessions yet.</p>`}
-    </div>
-    <div class="admin-sec">
-      <h3>PLAYER STATS</h3>
-      ${(()=>{
-        const stats={};
-        nominations.forEach(n=>{ if(!stats[n.submitted_by]) stats[n.submitted_by]={noms:0,votes:0,wins:0}; stats[n.submitted_by].noms++; });
-        activeVotes.forEach(v=>{ const n=v.voter_name||'?'; if(!stats[n]) stats[n]={noms:0,votes:0,wins:0}; stats[n].votes++; });
-        // Count wins
-        matchups.filter(m=>m.status==='complete'&&m.winner_id).forEach(m=>{
-          const winner=nominations.find(n=>n.id===m.winner_id);
-          if(winner&&stats[winner.submitted_by]) stats[winner.submitted_by].wins++;
-        });
-        const entries=Object.entries(stats).sort((a,b)=>b[1].noms-a[1].noms);
-        if(!entries.length) return `<p style="color:var(--text-muted);font-size:13px;">No data yet.</p>`;
-        return entries.map(([name,s])=>`<div class="profile-card">
-          <div class="profile-name">${esc(name)}</div>
-          <div class="profile-stat">${s.noms} nomination${s.noms!==1?'s':''} · ${s.votes} vote${s.votes!==1?'s':''} · ${s.wins} match win${s.wins!==1?'s':''}</div>
-        </div>`).join('');
-      })()}
-    </div>
-    <div class="admin-sec">
       <h3>DANGER ZONE</h3>
       <button class="btn btn-red btn-sm" onclick="adminReset()">🗑 Reset Session</button>
-    </div>
+    </div>`:''}
   `;
 }
 
