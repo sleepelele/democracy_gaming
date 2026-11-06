@@ -1040,6 +1040,10 @@ async function loadMatchups(){
   const {data}=await sb.from('matchups').select('*').eq('session_id',session.id).order('round').order('position');
   matchups=data||[];
   await loadAllVotes();
+  // If voting is already in progress (e.g. user joined mid-vote), start the tick immediately
+  const av=activeMatchup();
+  if(av?.status==='voting'&&av.vote_ends_at) startVoteTimerTick();
+  else stopVoteTimerTick();
 }
 async function loadActiveVotes(){
   const a=activeMatchup();
@@ -2136,9 +2140,12 @@ function cardHtml(m,tpl){
       ${(()=>{
         const m2=matchups.find(x=>x.id===m.id);
         if(m2?.vote_ends_at&&isVoting){
-          const secsLeft=Math.max(0,Math.round((new Date(m2.vote_ends_at)-Date.now())/1000));
+          const msLeft=new Date(m2.vote_ends_at)-Date.now();
+          const secsLeft=Math.max(0,Math.round(msLeft/1000));
           const urgent=secsLeft<=10;
-          return `<div class="b-timer b-timer-el${urgent?' urgent':''}">${urgent?'⚠ ':''} ${secsLeft}s remaining</div>`;
+          // secsLeft of 0 at render time likely means data not yet synced — show live value via tick
+          const display=secsLeft===0&&msLeft>-2000?'...' : (urgent?'⚠ ':'')+secsLeft+'s remaining';
+          return `<div class="b-timer b-timer-el${urgent?' urgent':''}">${display}</div>`;
         } return '';
       })()}
       <div class="b-vote-footer">
