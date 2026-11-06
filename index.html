@@ -776,7 +776,7 @@
 // ══════════════════════════════════════════════════════════════════
 // ▌ CONFIG
 // ══════════════════════════════════════════════════════════════════
-const APP_VERSION = 'v1.4';
+const APP_VERSION = 'v1.5';
 const SUPABASE_URL = 'https://dyttrevzhxjmtdiynfpu.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR5dHRyZXZ6aHhqbXRkaXluZnB1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0NzQzNTgsImV4cCI6MjA5MTA1MDM1OH0.jfEEylD0LnXmitqy7lWDmL0TlGADaCvIW-yDhmuZHTg';
 // Password is stored as SHA-256 hash — plaintext never appears in source
@@ -1210,18 +1210,6 @@ function setupRealtime(){
     .on('postgres_changes',{event:'*',schema:'public',table:'session_history'},async()=>{
       await loadSessionHistory();
       if(activeScreen==='screen-admin') renderAdminContent();
-    })
-    .on('postgres_changes',{event:'DELETE',schema:'public',table:'game_sessions'},()=>{
-      // Admin reset — kick all connected users
-      if(!isAdmin){
-        stopPresenceHeartbeat();
-        session=null; nominations=[]; matchups=[]; joinRequests=[];
-        nickname=''; localStorage.removeItem('nickname');
-        document.getElementById('header-nick').textContent='';
-        document.getElementById('nav-tabs').classList.remove('show');
-        nav('screen-lobby'); renderLobby(); updateHeader();
-        toast('Session ended by admin','');
-      }
     })
     .subscribe();
 }
@@ -2230,6 +2218,7 @@ function renderVoteScreen(){
   const g1=nominations.find(n=>n.id===a.game1_id);
   const g2=nominations.find(n=>n.id===a.game2_id);
   const mv=myVote(a.id);
+  const isVoting=a.status==='voting';
   const revealing=a.status==='revealing';
   const g1v=activeVotes.filter(v=>v.game_id===a.game1_id).length;
   const g2v=activeVotes.filter(v=>v.game_id===a.game2_id).length;
@@ -2338,12 +2327,7 @@ function renderAdminContent(){
         <div class="info-row"><span class="info-k">Votes cast</span><span class="info-v">${activeVotes.length}</span></div>`:''}
         <div class="info-row" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
           <span class="info-k">Vote display</span>
-          <span class="info-v" style="display:flex;align-items:center;gap:10px;">
-            <span style="color:${session.live_votes?'var(--green)':'var(--text-muted)'}">
-              ${session.live_votes?'🟢 Live — votes visible in real-time':'🔴 Hidden — reveal after voting'}
-            </span>
-            <button class="btn btn-sm" style="padding:3px 10px;font-size:12px;background:var(--surface3);border:1px solid var(--border2);color:var(--text);" onclick="toggleLiveVotes()">Toggle</button>
-          </span>
+          <span class="info-v" style="color:var(--green);">🟢 Always live</span>
         </div>
       </div>
     </div>
