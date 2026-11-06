@@ -1183,10 +1183,12 @@ function setupRealtime(){
         const g1n=nominations.find(n=>n.id===a.game1_id)?.game_name||'?';
         const g2n=nominations.find(n=>n.id===a.game2_id)?.game_name||'?';
         sendNotif('🗳️ Voting is live!',`${g1n} vs ${g2n} — cast your vote!`);
-        // With live votes, push everyone to the big vote screen; otherwise bracket is fine
-        if(session?.live_votes) nav('screen-vote');
-        else if(activeScreen!=='screen-bracket') nav('screen-bracket');
+        // Push everyone to vote screen (votes are always live now)
+        if(activeScreen!=='screen-admin') nav('screen-vote');
         if(a.vote_ends_at) startVoteTimerTick();
+      } else if(!a && activeScreen==='screen-vote'){
+        // No active matchup — voting/flip/pitch just ended; send non-admins back to bracket
+        if(!isAdmin) nav('screen-bracket');
       } else {
         if(activeScreen==='screen-bracket'){ renderBracket(); const a2=activeMatchup(); if(a2?.vote_ends_at&&a2.status==='voting') startVoteTimerTick(); else stopVoteTimerTick(); }
         if(activeScreen==='screen-vote') renderVoteScreen();
@@ -1717,11 +1719,8 @@ async function adminReset(){
 function nav(id){
   // Non-admin users cannot navigate away during a coin flip or pitch phase
   const _aStatus=activeMatchup()?.status;
-  if(!isAdmin && _aStatus==='flipping' && id!=='screen-vote'){
+  if(!isAdmin && _aStatus==='flipping' && id!=='screen-vote' && id!=='screen-bracket'){
     toast('The oracle is deciding — wait for the result!','err'); return;
-  }
-  if(!isAdmin && _aStatus==='pitching' && id!=='screen-vote'){
-    toast('Pitch is in progress — wait for voting to open!','err'); return;
   }
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
