@@ -350,6 +350,18 @@
       color: var(--text-dim); letter-spacing: 0.5px;
     }
 
+    /* ── Vote cast notification ── */
+    #vote-notif {
+      position: fixed; top: 72px; left: 50%; transform: translateX(-50%) translateY(-120%);
+      z-index: 600; background: var(--surface2); border: 1px solid var(--gold);
+      border-radius: var(--r); padding: 10px 22px;
+      font-size: 16px; font-weight: 500; color: var(--cream);
+      letter-spacing: 0.5px; white-space: nowrap;
+      transition: transform 0.28s cubic-bezier(0.34,1.56,0.64,1);
+      pointer-events: none; box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+    }
+    #vote-notif.show { transform: translateX(-50%) translateY(0); }
+
     /* ── Pitch overlay ── */
     #pitch-overlay {
       display: none; position: fixed; inset: 0; z-index: 500;
@@ -735,6 +747,8 @@
 
 <!-- ── Toast ───────────────────────────────────────────────────── -->
 <div id="toast"></div>
+<!-- ── Vote cast notification ───────────────────────────────────── -->
+<div id="vote-notif"></div>
 
 <!-- ── Pitch Timer Overlay ──────────────────────────────────────── -->
 <div id="pitch-overlay">
@@ -865,6 +879,7 @@ let presenceList=[], sessionHistory=[];
 let voteTimerInterval=null;
 let pitchTimerInterval=null;
 let pitchVoteDuration=30; // vote duration (secs) queued after pitch phase ends
+let lastVoterTokens=new Set(); // tracks who has voted on the current active matchup
 let presenceHeartbeat=null;
 
 // ══════════════════════════════════════════════════════════════════
@@ -1039,6 +1054,7 @@ async function loadActiveVotes(){
   if(!a){ activeVotes=[]; return; }
   const {data}=await sb.from('votes').select('*').eq('matchup_id',a.id);
   activeVotes=data||[];
+  checkNewVoters();
 }
 async function loadAllVotes(){
   if(!session) return;
@@ -1161,11 +1177,13 @@ function setupRealtime(){
         stopPitchDisplay();
         document.getElementById('pitch-overlay').classList.remove('active');
       }
-      if(a&&a.status==='voting'&&activeScreen!=='screen-admin'&&activeScreen!=='screen-bracket'){
+      if(a&&a.status==='voting'&&activeScreen!=='screen-admin'){
         const g1n=nominations.find(n=>n.id===a.game1_id)?.game_name||'?';
         const g2n=nominations.find(n=>n.id===a.game2_id)?.game_name||'?';
         sendNotif('🗳️ Voting is live!',`${g1n} vs ${g2n} — cast your vote!`);
-        nav('screen-bracket');
+        // With live votes, push everyone to the big vote screen; otherwise bracket is fine
+        if(session?.live_votes) nav('screen-vote');
+        else if(activeScreen!=='screen-bracket') nav('screen-bracket');
         if(a.vote_ends_at) startVoteTimerTick();
       } else {
         if(activeScreen==='screen-bracket'){ renderBracket(); const a2=activeMatchup(); if(a2?.vote_ends_at&&a2.status==='voting') startVoteTimerTick(); else stopVoteTimerTick(); }
@@ -1465,18 +1483,56 @@ function playFinalSound(){
   } catch(e){}
 }
 
-// ── Semi-final detection ───────────────────────────────────────────
-function isSemiFinal(m){
+// ── Pitch eligibility: Winners Round 1 (intro) + Grand Final (climax) ──
+function shouldHavePitch(m){
   if(!m||!m.template_id) return false;
-  const n=nominations.length; if(n<4) return false;
-  let size=4; while(size<n) size*=2;
-  const k=Math.log2(size);          // winners rounds total
-  const lbRounds=2*(k-1);           // losers rounds total
-  // Winners semi-final = last round before winners final (round k-1)
-  if(k>=2 && m.template_id.startsWith('W-R'+(k-1)+'-')) return true;
-  // Losers semi-final = last round before losers final (round lbRounds-1)
-  if(lbRounds>=2 && m.template_id.startsWith('L-R'+(lbRounds-1)+'-')) return true;
+  if(m.template_id.startsWith('W-R1-')) return true;  // first round — games need introducing
+  if(m.template_id==='GF-P1') return true;             // grand final — maximum drama
   return false;
+}
+
+// ── Live votes toggle ──────────────────────────────────────────────
+async function toggleLiveVotes(){
+  if(!session) return;
+  const newVal=!session.live_votes;
+  await sb.from('game_sessions').update({live_votes:newVal}).eq('id',session.id);
+  session.live_votes=newVal;
+  renderAdminContent();
+  toast(`Live votes ${newVal?'ON — everyone sees votes in real-time':'OFF — votes hidden until revealed'}`, 'ok');
+}
+
+// ── Vote cast notification popup ───────────────────────────────────
+let _voteNotifQueue=[], _voteNotifRunning=false;
+function showVoteNotif(name, gameName, liveMode){
+  const text = liveMode ? `🗳️ ${name} → ${gameName}` : `🗳️ ${name} locked in a vote`;
+  _voteNotifQueue.push(text);
+  if(!_voteNotifRunning) _runVoteNotifQueue();
+}
+function _runVoteNotifQueue(){
+  if(!_voteNotifQueue.length){ _voteNotifRunning=false; return; }
+  _voteNotifRunning=true;
+  const el=document.getElementById('vote-notif');
+  el.textContent=_voteNotifQueue.shift();
+  el.classList.add('show');
+  setTimeout(()=>{
+    el.classList.remove('show');
+    setTimeout(_runVoteNotifQueue, 320); // wait for slide-out
+  }, 2800);
+}
+
+// ── Detect new voters since last check ────────────────────────────
+function checkNewVoters(){
+  const a=activeMatchup();
+  if(!a||a.status!=='voting'){ return; }
+  activeVotes.forEach(v=>{
+    if(!lastVoterTokens.has(v.device_token)){
+      const gameName=(v.game_id===a.game1_id
+        ? nominations.find(n=>n.id===a.game1_id)
+        : nominations.find(n=>n.id===a.game2_id))?.game_name || '?';
+      showVoteNotif(v.voter_name||'Someone', gameName, session?.live_votes);
+      lastVoterTokens.add(v.device_token);
+    }
+  });
 }
 
 // ── Pitch phase functions ──────────────────────────────────────────
@@ -1550,6 +1606,7 @@ async function adminStartVoting(matchupId, durationSecs){
     toast('Finish the current match first','err'); return;
   }
   coinFlip=null;
+  lastVoterTokens.clear(); // reset voter tracking for new matchup
   votingStartedAt=Date.now(); // record time so ghost-click reveal is blocked for 3s
   const dur=parseInt(durationSecs)||0;
   const vote_ends_at=dur>0 ? new Date(Date.now()+dur*1000).toISOString() : null;
@@ -2043,9 +2100,11 @@ function cardHtml(m,tpl){
       {game:g1,gid:m.game1_id,gv:g1v,isWin:isRevealing&&g1v>g2v,isLose:isRevealing&&g2v>g1v},
       {game:g2,gid:m.game2_id,gv:g2v,isWin:isRevealing&&g2v>g1v,isLose:isRevealing&&g1v>g2v},
     ];
+    const showLive=session?.live_votes&&isVoting; // show counts live during voting
     const rowsHtml=rows.map(({game,gid,gv,isWin,isLose})=>{
       const myPick=mv?.game_id===gid;
       const isPendingThis=isPending&&pendingVote?.gameId===gid;
+      const liveVotersForRow=showLive?activeVotes.filter(v=>v.matchup_id===m.id&&v.game_id===gid).map(v=>esc(v.voter_name||'?')):[];
       let rowCls='b-vote-row';
       if(myPick||isPendingThis) rowCls+=' my-vote';
       if(isRevealing&&isWin) rowCls+=' win-row';
@@ -2058,7 +2117,8 @@ function cardHtml(m,tpl){
         ${game?.steam_app_id?`<span class='steam-btn' onclick='showSteamInfo(event,"${game.steam_app_id}")'>ℹ STEAM</span>`:''}
         ${myPick?`<span class="b-vote-check">✓ you</span>`:''}
         ${isPendingThis?`<span class="b-vote-check">← selected</span>`:''}
-        ${isRevealing?`<span class="b-vote-count">${gv}</span>`:''}
+        ${(isRevealing||showLive)?`<span class="b-vote-count">${gv}</span>`:''}
+        ${liveVotersForRow.length?`<span style="font-size:11px;color:var(--gold);margin-left:4px;">${liveVotersForRow.join(', ')}</span>`:''}
       </div>`;
     }).join('');
 
@@ -2117,7 +2177,7 @@ function cardHtml(m,tpl){
   const canStart=isAdmin&&m.status==='pending'&&m.game1_id&&m.game2_id;
   const canReveal=isAdmin&&m.status==='voting';
   const canComplete=isAdmin&&m.status==='revealing';
-  const isSF=isSemiFinal(m); // semi-finals get a pitch button
+  const isSF=shouldHavePitch(m); // first rounds + grand final get pitch button
   const adminHtml=(canStart||canReveal||canComplete)?`
     <div class="b-actions">
       ${canStart?`
@@ -2209,17 +2269,17 @@ function renderVoteScreen(){
            onclick="${!mv&&!revealing?`castVote('${a.id}','${a.game1_id}')`:''}" style="${!mv&&!revealing?'':'cursor:default'}">
         ${mv?.game_id===a.game1_id?'<span class="v-my-badge">YOUR VOTE</span>':''}
         <div class="v-game-name">${esc(g1?.game_name||'TBD')}</div>
-        ${revealing?`<div class="v-vote-count">${g1v}</div><div class="v-vote-label">vote${g1v!==1?'s':''}</div>${g1voters.length?`<div class="v-voters">${g1voters.map(n=>`<span class="v-voter-chip">${esc(n)}</span>`).join('')}</div>`:''}`:''}
+        ${(revealing||session?.live_votes)?`<div class="v-vote-count">${g1v}</div><div class="v-vote-label">vote${g1v!==1?'s':''}</div>${g1voters.length?`<div class="v-voters">${g1voters.map(n=>`<span class="v-voter-chip">${esc(n)}</span>`).join('')}</div>`:''}`:''}
       </div>
       <div class="vote-vs">VS</div>
       <div class="vote-card ${g2cls} ${mv?'voted':''} ${revealing?'revealing':''}"
            onclick="${!mv&&!revealing?`castVote('${a.id}','${a.game2_id}')`:''}" style="${!mv&&!revealing?'':'cursor:default'}">
         ${mv?.game_id===a.game2_id?'<span class="v-my-badge">YOUR VOTE</span>':''}
         <div class="v-game-name">${esc(g2?.game_name||'TBD')}</div>
-        ${revealing?`<div class="v-vote-count">${g2v}</div><div class="v-vote-label">vote${g2v!==1?'s':''}</div>${g2voters.length?`<div class="v-voters">${g2voters.map(n=>`<span class="v-voter-chip">${esc(n)}</span>`).join('')}</div>`:''}`:''}
+        ${(revealing||session?.live_votes)?`<div class="v-vote-count">${g2v}</div><div class="v-vote-label">vote${g2v!==1?'s':''}</div>${g2voters.length?`<div class="v-voters">${g2voters.map(n=>`<span class="v-voter-chip">${esc(n)}</span>`).join('')}</div>`:''}`:''}
       </div>
     </div>
-    ${revealing?`<div class="vote-bar"><div class="bg1" style="width:${barG1}%"></div><div class="bg2" style="width:${barG2}%"></div></div>`:''}
+    ${(revealing||session?.live_votes)?`<div class="vote-bar"><div class="bg1" style="width:${barG1}%"></div><div class="bg2" style="width:${barG2}%"></div></div>`:''}
     <div class="vote-status">
       ${revealing
         ? isTie
@@ -2227,9 +2287,13 @@ function renderVoteScreen(){
             ? `🪙 The coin has spoken! <strong style="color:var(--green)">${esc(nominations.find(n=>n.id===coinFlip.winnerId)?.game_name||'?')}</strong> advances!`
             : `🪙 IT'S A TIE &mdash; COIN FLIP IN PROGRESS...`
           : `${total} vote${total!==1?'s':''} &mdash; ${g1v===g2v?'🤝 Tie!':'🏆 '+esc(g1v>g2v?(g1?.game_name||'?'):(g2?.game_name||'?'))+' wins the people\'s vote!'}`
-        : mv
-          ? `<div class="pulse-row"><div class="dot"></div><span>Vote cast! Waiting for the reveal...</span></div>`
-          : `👆 Click a game to cast your vote <span style="color:var(--text-muted)">(${total} cast so far)</span>`
+        : session?.live_votes
+          ? (mv
+              ? `<div class="pulse-row"><div class="dot"></div><span>Vote cast! <span style="color:var(--gold)">${total} vote${total!==1?'s':''} live</span></span></div>`
+              : `👆 Click a game to vote — <span style="color:var(--gold)">${total} vote${total!==1?'s':''} cast live</span>`)
+          : mv
+            ? `<div class="pulse-row"><div class="dot"></div><span>Vote cast! Waiting for the reveal...</span></div>`
+            : `👆 Click a game to cast your vote <span style="color:var(--text-muted)">(${total} cast so far)</span>`
       }
     </div>
     ${revealing&&isTie?`
@@ -2275,6 +2339,15 @@ function renderAdminContent(){
         <div class="info-row"><span class="info-k">Max per person</span><span class="info-v">${session.max_noms_per_person}</span></div>
         ${a?`<div class="info-row"><span class="info-k">Active match</span><span class="info-v hi">${a.template_id} (${a.status})</span></div>
         <div class="info-row"><span class="info-k">Votes cast</span><span class="info-v">${activeVotes.length}</span></div>`:''}
+        <div class="info-row" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+          <span class="info-k">Vote display</span>
+          <span class="info-v" style="display:flex;align-items:center;gap:10px;">
+            <span style="color:${session.live_votes?'var(--green)':'var(--text-muted)'}">
+              ${session.live_votes?'🟢 Live — votes visible in real-time':'🔴 Hidden — reveal after voting'}
+            </span>
+            <button class="btn btn-sm" style="padding:3px 10px;font-size:12px;background:var(--surface3);border:1px solid var(--border2);color:var(--text);" onclick="toggleLiveVotes()">Toggle</button>
+          </span>
+        </div>
       </div>
     </div>
     ${session.phase==='nominating'?`
