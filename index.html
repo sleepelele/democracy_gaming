@@ -351,16 +351,6 @@
     }
 
     /* ── Vote cast notification ── */
-    #vote-notif {
-      position: fixed; top: 72px; left: 50%; transform: translateX(-50%) translateY(-120%);
-      z-index: 600; background: var(--surface2); border: 1px solid var(--gold);
-      border-radius: var(--r); padding: 10px 22px;
-      font-size: 16px; font-weight: 500; color: var(--cream);
-      letter-spacing: 0.5px; white-space: nowrap;
-      transition: transform 0.28s cubic-bezier(0.34,1.56,0.64,1);
-      pointer-events: none; box-shadow: 0 4px 24px rgba(0,0,0,0.5);
-    }
-    #vote-notif.show { transform: translateX(-50%) translateY(0); }
 
     /* ── Pitch overlay ── */
     #pitch-overlay {
@@ -748,7 +738,6 @@
 <!-- ── Toast ───────────────────────────────────────────────────── -->
 <div id="toast"></div>
 <!-- ── Vote cast notification ───────────────────────────────────── -->
-<div id="vote-notif"></div>
 
 <!-- ── Pitch Timer Overlay ──────────────────────────────────────── -->
 <div id="pitch-overlay">
@@ -787,6 +776,7 @@
 // ══════════════════════════════════════════════════════════════════
 // ▌ CONFIG
 // ══════════════════════════════════════════════════════════════════
+const APP_VERSION = 'v1.4';
 const SUPABASE_URL = 'https://dyttrevzhxjmtdiynfpu.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR5dHRyZXZ6aHhqbXRkaXluZnB1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0NzQzNTgsImV4cCI6MjA5MTA1MDM1OH0.jfEEylD0LnXmitqy7lWDmL0TlGADaCvIW-yDhmuZHTg';
 // Password is stored as SHA-256 hash — plaintext never appears in source
@@ -1505,23 +1495,10 @@ async function toggleLiveVotes(){
   toast(`Live votes ${newVal?'ON — everyone sees votes in real-time':'OFF — votes hidden until revealed'}`, 'ok');
 }
 
-// ── Vote cast notification popup ───────────────────────────────────
+// ── Vote cast notification (no-op — removed popup, votes visible on bracket) ──
 let _voteNotifQueue=[], _voteNotifRunning=false;
-function showVoteNotif(name, gameName, liveMode){
-  const text = liveMode ? `🗳️ ${name} → ${gameName}` : `🗳️ ${name} locked in a vote`;
-  _voteNotifQueue.push(text);
-  if(!_voteNotifRunning) _runVoteNotifQueue();
-}
+function showVoteNotif(){ }
 function _runVoteNotifQueue(){
-  if(!_voteNotifQueue.length){ _voteNotifRunning=false; return; }
-  _voteNotifRunning=true;
-  const el=document.getElementById('vote-notif');
-  el.textContent=_voteNotifQueue.shift();
-  el.classList.add('show');
-  setTimeout(()=>{
-    el.classList.remove('show');
-    setTimeout(_runVoteNotifQueue, 320); // wait for slide-out
-  }, 2800);
 }
 
 // ── Detect new voters since last check ────────────────────────────
@@ -2346,6 +2323,7 @@ function renderAdminContent(){
     <div class="admin-sec">
       <h3>SESSION INFO</h3>
       <div class="info-grid">
+        <div class="info-row"><span class="info-k">Version</span><span class="info-v" style="color:var(--text-muted);font-size:13px;">${APP_VERSION}</span></div>
         <div class="info-row"><span class="info-k">Phase</span><span class="info-v hi">${session.phase.toUpperCase()}</span></div>
         <div class="info-row"><span class="info-k">Games nominated</span><span class="info-v">${nominations.length}</span></div>
         <div class="info-row"><span class="info-k">Max per person</span><span class="info-v">${session.max_noms_per_person}</span></div>
